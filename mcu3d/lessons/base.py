@@ -23,9 +23,18 @@ class Lesson(DirectObject):
     # cpu nvic flash sram clock gpio tim uart i2c adc bus pins，或 all
     location = []
     location_text = ""     # 面板开头“在 MCU 的哪里”的说明
+    link_text = ""         # “承上启下”：用到前面哪课的什么，后面哪课会用到本课
+    apply_text = ""        # “学了能做什么”
     terms = []             # 面板最后“本课新词”要解释的术语（见 glossary.py）
+    sim_program = "inc"    # 按 S 打开芯片内部模拟器时先载入的例程
+    show_chip_map = True   # 右上角是否显示芯片地图
+    sim_layout = False     # True：画面右边和下方是模拟器的数据面板
     # 相机初始视角：(距离, 水平角, 俯仰角, 观察点)
     camera = (22, 0, -40, (0, 0, 0))
+
+    @classmethod
+    def lesson_hints(cls):
+        return cls.hints
 
     def __init__(self, app):
         DirectObject.__init__(self)

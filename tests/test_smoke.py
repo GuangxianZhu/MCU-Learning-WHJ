@@ -15,21 +15,25 @@ from mcu3d.app import MCUApp  # noqa: E402
 from mcu3d.lessons import LESSONS  # noqa: E402
 
 # 每课要模拟的鼠标点击（物体标签）
-PICKS = {0: ["chip"], 1: ["cpu", "uart"], 2: ["bit5"]}
+SIM_PICKS = ["alu", "regs", "sram"]
+PICKS = {0: ["chip"], 1: ["bit5"], 2: SIM_PICKS, 3: SIM_PICKS, 4: SIM_PICKS,
+         5: SIM_PICKS, 6: SIM_PICKS}
 
 # 每课要模拟的按键（直接调用事件，相当于用户按下）
+SIM_KEYS = ["t", "t", "space", "space", "r", "arrow_up", "m", "i", "2", "z", "space"]
 KEYS = {
     0: ["space", "space", "space", "space", "space"],
-    1: ["space"],
-    2: ["1", "3", "8", "space", "arrow_left", "a"],
-    3: ["1", "4", "b", "space", "space"],
-    4: ["space", "arrow_up"],
-    5: ["arrow_up", "space", "arrow_down", "f"],
-    6: ["shift-a", "space", "arrow_up"],
-    7: ["1", "m", "2"],
-    8: ["r", "arrow_up", "arrow_left", "r"],
-    9: ["h", "arrow_down"],
+    1: ["1", "3", "8", "space", "arrow_left", "a"],
+    2: SIM_KEYS, 3: SIM_KEYS, 4: SIM_KEYS, 5: SIM_KEYS, 6: SIM_KEYS,
+    7: ["1", "4", "b", "space", "space"],
+    8: ["arrow_up", "space", "arrow_down", "f"],
+    9: ["space", "arrow_up"],
+    10: ["shift-a", "space", "arrow_up"],
+    11: ["1", "m", "2"],
+    12: ["r", "arrow_up", "arrow_left", "r"],
+    13: ["h", "arrow_down"],
 }
+GPIO, PROJECT = 7, 13
 
 _app = None
 
@@ -67,9 +71,9 @@ def test_all_lessons():
             app.messenger.send(key)
             run_frames(app, 20)
         run_frames(app, 90)
-        if i == 3:
+        if i == GPIO:
             app.messenger.send("b-up")
-        if i == 9:
+        if i == PROJECT:
             run_frames(app, 120)   # 继续加热，等温度超过阈值触发报警
             app.messenger.send("h-up")
         app.messenger.send("page_down")
@@ -79,6 +83,32 @@ def test_all_lessons():
     app.next_lesson()
     app.prev_lesson()
     app.show_menu()
+    assert app.lesson is None
+
+
+def test_simulator():
+    """从一课按 S 打开模拟器，把每个例程都跑一阵，再按 Esc 回到原来那课。"""
+    from mcu3d.sim.programs import ORDER
+    app = get_app()
+    app.open_lesson(3)
+    app.messenger.send("s")
+    assert app.in_simulator and app.sim_return == 3
+    for k in range(len(ORDER)):
+        app.messenger.send(str(k + 1))
+        for _ in range(3):
+            app.messenger.send("arrow_up")      # 调到最快
+        app.messenger.send("r")
+        run_frames(app, 200)
+        app.messenger.send("r")
+        assert app.lesson.view.fault is None
+        assert app.lesson.view.machine.cpu.count > 5
+        shot(app, "sim_%d_%s" % (k + 1, ORDER[k]))
+    app.messenger.send("escape")
+    assert not app.in_simulator and app.lesson_index == 3
+    app.show_menu()
+    app.open_simulator()
+    run_frames(app, 3)
+    app.messenger.send("escape")
     assert app.lesson is None
 
 
@@ -92,4 +122,5 @@ def shot(app, name):
 if __name__ == "__main__":
     test_menu()
     test_all_lessons()
+    test_simulator()
     print("全部课程运行正常")

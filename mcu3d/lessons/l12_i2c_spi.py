@@ -1,4 +1,4 @@
-"""第 8 课：I2C 与 SPI——一条总线挂多个设备。"""
+"""第 12 课：I2C 与 SPI——一条总线挂多个设备。"""
 
 from .. import parts, theme
 from ..ui import set_text
@@ -75,6 +75,11 @@ class I2CSPILesson(Lesson):
         "它们内部也有数据寄存器、移位寄存器和状态寄存器：CPU 把字节写进数据寄存器，"
         "外设按时序把它变成引脚上的高低电平。I2C 的 SDA/SCL、SPI 的 SCK/MOSI/MISO/CS "
         "都是借给这些外设使用的 GPIO 引脚。")
+    link_text = (
+        "和上一课的 UART 对比：多了一根时钟线（同步），一条总线能挂多个设备；外设内部同样是“数据寄存器 + 移位寄存器”。")
+    apply_text = (
+        "连接温湿度传感器、OLED 屏幕、EEPROM 存储芯片、SD 卡。温度报警器可以加一块 OLED 屏显示温度（可选）。")
+    sim_program = "inc"
     terms = ["I2C", "SDA", "SCL", "主机", "从机", "设备地址", "ACK", "NACK", "上拉电阻",
              "同步", "SPI", "SCK", "MOSI", "MISO", "CS", "全双工"]
 

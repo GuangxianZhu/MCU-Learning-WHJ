@@ -1,4 +1,4 @@
-"""第 4 课：GPIO——用寄存器控制引脚。"""
+"""第 8 课：GPIO——用寄存器控制引脚。"""
 
 from .. import parts, theme
 from ..ui import set_text
@@ -32,7 +32,7 @@ MODES = [
      "    count++;\n"
      "    delay_ms(400);\n"
      "}\n"
-     "看，上一课的二进制数字变成了灯！"),
+     "看，第 2 课的二进制数字变成了灯！"),
 ]
 
 INTRO = ("GPIO（General Purpose Input/Output）= 通用输入输出口。\n\n"
@@ -57,6 +57,11 @@ class GPIOLesson(Lesson):
         "都长在 GPIO 外设里面。以 STM32F103 为例，GPIOA 的寄存器从地址 0x4001 0800 开始，"
         "其中 ODR 在 0x4001 080C。CPU 经过总线往这个地址写数字，"
         "GPIO 外设就按每一位去改变对应引脚的电压。")
+    link_text = (
+        "把第 2–5 课串起来：C 代码里的 GPIOA->ODR |= 1 << 5 变成一条 STR 指令（第 5 课），经总线写到外设区的一个地址（第 3、4 课），ODR 的第 5 位（第 2 课）变成 1，引脚就输出高电平。下一课的定时器也是这样通过寄存器来控制的。")
+    apply_text = (
+        "能写点灯、按键、流水灯程序。温度报警器（第 14 课）里的红灯、绿灯就靠它。")
+    sim_program = "inc"
     terms = ["GPIO", "端口", "电平", "ODR", "IDR", "MODER"]
 
     def setup(self):

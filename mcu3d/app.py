@@ -10,15 +10,16 @@ from panda3d.core import (AmbientLight, BitMask32, ClockObject,
                           loadPrcFileData)
 
 from . import glossary, parts, theme, ui
-from .lessons import LESSONS, UPCOMING
+from .lessons import LESSONS, STAGES, UPCOMING, SimulatorLesson, stage_of
 from .lessons.base import PICK_MASK
 
 PANEL_W = 1.25      # 左侧讲解面板宽度（aspect2d 单位）
+SIM_PANEL_W = 1.0   # 模拟器类课程右边要放数据面板，左侧面板窄一些
 BODY_SCALE = 0.042  # 讲解文字大小
 
 GLOBAL_HINTS = ("鼠标：拖动旋转视角，滚轮缩放，左键点选物体\n"
                 "讲解太长时：鼠标放在面板上滚动滚轮，或按 PageUp/PageDown\n"
-                "Home 重置视角   Tab 隐藏/显示面板\n"
+                "Home 重置视角   Tab 隐藏/显示面板   S 芯片内部模拟器\n"
                 "[ 上一课   ] 下一课   Esc 课程菜单")
 
 # 右上角“芯片地图”：(标识, 名称, 颜色, 列, 行)，和第 2 课的布局一致
@@ -104,12 +105,17 @@ class MCUApp(ShowBase):
                             "win-size 1280 760\n"
                             "framebuffer-multisample 1\nmultisamples 4\n"
                             "sync-video 1")
+        if not offscreen:
+            # 小字缩小显示时用多级纹理，细笔画不会消失（软件渲染器不支持，所以离屏测试不开）
+            loadPrcFileData("", "text-minfilter linear_mipmap_linear")
         if offscreen:
             loadPrcFileData("", "window-type offscreen\n"
                                 "load-display p3tinydisplay\n"
                                 "framebuffer-multisample 0\nmultisamples 0\n"
                                 "audio-library-name null")
         ShowBase.__init__(self)
+        if not offscreen:
+            self._fit_window()
         self.disableMouse()
         self.setBackgroundColor(*theme.BG)
         if not offscreen:
@@ -118,6 +124,7 @@ class MCUApp(ShowBase):
             self.win.requestProperties(props)
 
         self.font = ui.load_font(self.loader)
+        ui.register_text_colors()
         self._setup_lights()
         self.orbit = OrbitCamera(self)
         self._setup_picking()
@@ -126,10 +133,13 @@ class MCUApp(ShowBase):
 
         self.lesson = None
         self.lesson_index = None
+        self.sim_return = None     # 从哪一课打开的模拟器（None 表示从菜单）
+        self.in_simulator = False
         self.hover_tag = None
         self.panel_visible = True
 
-        self.accept("escape", self.show_menu)
+        self.accept("escape", self._escape)
+        self.accept("s", self.toggle_simulator)
         self.accept("[", self.prev_lesson)
         self.accept("]", self.next_lesson)
         self.accept("page_up", self.scroll_body, [-8])
@@ -147,6 +157,22 @@ class MCUApp(ShowBase):
             self.open_lesson(start_lesson - 1)
         else:
             self.show_menu()
+
+    def _fit_window(self):
+        """屏幕够大就把窗口开大一些（文字更清楚），但不超过屏幕的 90%。"""
+        try:
+            dw, dh = self.pipe.getDisplayWidth(), self.pipe.getDisplayHeight()
+        except Exception:
+            return
+        if dw <= 0 or dh <= 0:
+            return
+        h = int(min(dh * 0.88, 1080))
+        w = int(min(dw * 0.94, h * 1.7))
+        if w > 1280 and h > 760:
+            props = WindowProperties()
+            props.setSize(w, h)
+            props.setOrigin(max(0, (dw - w) // 2), max(0, (dh - h) // 2 - 20))
+            self.win.requestProperties(props)
 
     # ------------------------------------------------------------ 场景基础
     def _setup_lights(self):
@@ -200,6 +226,7 @@ class MCUApp(ShowBase):
 
     # ------------------------------------------------------------ 讲解面板
     def _setup_panel(self):
+        self.panel_w = PANEL_W
         self.panel = DirectFrame(parent=self.a2dTopLeft,
                                  frameColor=(0.04, 0.05, 0.08, 0.85),
                                  frameSize=(0, PANEL_W, -2.0, 0),
@@ -231,6 +258,48 @@ class MCUApp(ShowBase):
                          text_fg=theme.TEXT, relief=DGG.FLAT)
 
         self._setup_chip_map()
+        self._setup_roadmap()
+
+    def _setup_roadmap(self):
+        """顶部中间的课程路线图：14 个小格子按阶段分组，亮的是当前这课。"""
+        self.roadmap = DirectFrame(parent=self.a2dTopCenter, frameColor=(0.04, 0.05, 0.08, 0.75),
+                                   frameSize=(-0.43, 0.43, -0.155, -0.01))
+        gap, w = 0.022, 0.0
+        n = len(LESSONS)
+        w = (0.82 - gap * (len(STAGES) - 1)) / n
+        self.road_cells = []
+        x = -0.41
+        palette = [(0.35, 0.35, 0.4, 1), (0.3, 0.4, 0.6, 1), (0.6, 0.3, 0.3, 1),
+                   (0.6, 0.45, 0.2, 1), (0.2, 0.5, 0.55, 1), (0.45, 0.55, 0.25, 1)]
+        for k, (_, _, members) in enumerate(STAGES):
+            for i in members:
+                cell = DirectFrame(parent=self.roadmap, frameColor=palette[k],
+                                   frameSize=(x + 0.003, x + w - 0.003, -0.075, -0.025))
+                OnscreenText(parent=cell, text=str(i + 1), pos=(x + w / 2, -0.06),
+                             scale=0.026, font=self.font, fg=theme.TEXT)
+                self.road_cells.append((cell, palette[k]))
+                x += w
+            x += gap
+        self.road_text = OnscreenText(parent=self.roadmap, text="", pos=(0, -0.125),
+                                      scale=0.028, font=self.font, fg=theme.TEXT_DIM,
+                                      mayChange=True)
+
+    def update_roadmap(self, index):
+        cur = stage_of(index) if index is not None else None
+        for i, (cell, color) in enumerate(self.road_cells):
+            if i == index:
+                cell["frameColor"] = theme.ACCENT
+            elif stage_of(i) == cur:
+                cell["frameColor"] = color
+            else:
+                cell["frameColor"] = theme.scale(color, 0.45)
+        if cur is None:
+            self.road_text.setText("芯片内部模拟器（自由探索）· 按 S 或 Esc 返回")
+        else:
+            name, desc, members = STAGES[cur]
+            span = ("第 %d 课" % (members[0] + 1) if len(members) == 1
+                    else "第 %d–%d 课" % (members[0] + 1, members[-1] + 1))
+            self.road_text.setText("课程路线 · %s %s · %s" % (name, desc.split("（")[0], span))
 
     def _setup_chip_map(self):
         """右上角的芯片地图：亮起的模块就是本课讲的部分。"""
@@ -273,15 +342,19 @@ class MCUApp(ShowBase):
         parts_ = []
         if lesson.location_text:
             parts_.append("【在 MCU 的哪里】\n" + lesson.location_text)
+        if lesson.link_text:
+            parts_.append("【承上启下】\n" + lesson.link_text)
         if text:
             parts_.append(text)
+        if lesson.apply_text:
+            parts_.append("【学了能做什么】\n" + lesson.apply_text)
         terms = glossary.explain(lesson.terms)
         if terms:
             parts_.append("【本课新词】\n" + terms)
         return "\n\n".join(parts_)
 
     def set_body(self, text):
-        wrapped = ui.wrap(self.compose_body(text), (PANEL_W - 0.14) / BODY_SCALE)
+        wrapped = ui.wrap(self.compose_body(text), (self.panel_w - 0.14) / BODY_SCALE)
         self.body_lines = wrapped.split("\n")
         self._render_body()
 
@@ -319,7 +392,7 @@ class MCUApp(ShowBase):
         if (self.lesson is None or not self.panel_visible or mw is None
                 or not mw.hasMouse()):
             return False
-        return (mw.getMouseX() + 1) * self.getAspectRatio() < PANEL_W
+        return (mw.getMouseX() + 1) * self.getAspectRatio() < self.panel_w
 
     def _wheel(self, direction):
         if self.mouse_over_panel():
@@ -328,7 +401,7 @@ class MCUApp(ShowBase):
             self.orbit.zoom(1.1 if direction > 0 else 0.9)
 
     def set_hints(self, text):
-        text = ui.wrap(text, (PANEL_W - 0.14) / 0.034)
+        text = ui.wrap(text, (self.panel_w - 0.14) / 0.034)
         n = text.count("\n") + 1
         self.hint_lines = n
         self.hint_text.setText(text)
@@ -351,27 +424,37 @@ class MCUApp(ShowBase):
         OnscreenText(parent=self.menu, pos=(0, 0.7), scale=0.045,
                      font=self.font, fg=theme.TEXT_DIM,
                      text="零基础，从“芯片里面有什么”开始。点击一课开始学习。")
-        z = 0.55
-        rows = [(i, cls.title, cls.summary, True) for i, cls in enumerate(LESSONS)]
-        rows += [(len(LESSONS) + k, t, s, False) for k, (t, s) in enumerate(UPCOMING)]
-        for i, title, summary, ready in rows:
-            text = "第 %d 课   %s   ·   %s" % (i + 1, title, summary)
-            if not ready:
-                text += "（制作中）"
-            DirectButton(parent=self.menu, text=text, text_font=self.font,
-                         text_align=TextNode.ALeft, scale=0.045,
-                         pos=(-1.3, 0, z), frameSize=(-1, 58, -0.6, 1.2),
-                         frameColor=((0.13, 0.16, 0.24, 0.95) if ready
-                                     else (0.1, 0.1, 0.12, 0.8)),
-                         text_fg=theme.TEXT if ready else theme.TEXT_DIM,
-                         relief=DGG.FLAT,
-                         command=self.open_lesson if ready else None,
-                         extraArgs=[i] if ready else [],
-                         state=DGG.NORMAL if ready else DGG.DISABLED)
-            z -= 0.115
+        cols = [STAGES[:3], STAGES[3:]]
+        for c, stages in enumerate(cols):
+            x = -1.62 + c * 1.66
+            z = 0.56
+            for name, desc, members in stages:
+                OnscreenText(parent=self.menu, text="%s  %s" % (name, desc), pos=(x, z),
+                             scale=0.038, font=self.font, fg=theme.ACCENT,
+                             align=TextNode.ALeft)
+                z -= 0.085
+                for i in members:
+                    cls = LESSONS[i]
+                    DirectButton(parent=self.menu, text_font=self.font,
+                                 text="第 %d 课  %s · %s" % (i + 1, cls.title, cls.summary),
+                                 text_align=TextNode.ALeft, scale=0.038,
+                                 pos=(x, 0, z), frameSize=(-0.5, 41.5, -0.55, 1.15),
+                                 frameColor=(0.13, 0.16, 0.24, 0.95), text_fg=theme.TEXT,
+                                 relief=DGG.FLAT, command=self.open_lesson, extraArgs=[i])
+                    z -= 0.082
+                z -= 0.025
+        DirectButton(parent=self.menu, text_font=self.font,
+                     text="芯片内部模拟器：看 CPU 一条一条执行程序（任何一课按 S 也能打开）",
+                     scale=0.042, pos=(0, 0, -0.74), frameColor=(0.35, 0.2, 0.1, 0.95),
+                     text_fg=theme.TEXT, relief=DGG.FLAT, pad=(0.6, 0.35),
+                     command=self.open_simulator)
+        for k, (title, summary) in enumerate(UPCOMING):
+            OnscreenText(parent=self.menu, text="（制作中）%s · %s" % (title, summary),
+                         pos=(0, -0.82 - 0.05 * k), scale=0.032, font=self.font,
+                         fg=theme.TEXT_DIM)
         OnscreenText(parent=self.menu, pos=(0, -0.9), scale=0.035,
                      font=self.font, fg=theme.TEXT_DIM,
-                     text="进入课程后：[ 上一课  ] 下一课  Esc 回到菜单")
+                     text="进入课程后：[ 上一课  ] 下一课  S 模拟器  Esc 回到菜单")
 
         self.menu_scene = self.render.attachNewNode("menu-scene")
         parts.Chip(self.menu_scene, size=5, label="MCU")
@@ -384,6 +467,8 @@ class MCUApp(ShowBase):
         self.hint_text.hide()
         self.nav.hide()
         self.chip_map.hide()
+        self.roadmap.hide()
+        self.sim_return = None
         self.orbit.set_view(16, 20, -35, (0, 0, 0))
 
     # ------------------------------------------------------------ 课程切换
@@ -394,21 +479,61 @@ class MCUApp(ShowBase):
             self.hover_tag = None
 
     def open_lesson(self, index):
+        self.sim_return = None
+        self._open(LESSONS[index], index, "第 %d 课  %s" % (index + 1, LESSONS[index].title))
+
+    def open_simulator(self, program=None):
+        self._open(SimulatorLesson, None, "芯片内部模拟器", program)
+
+    def toggle_simulator(self):
+        """S：在课程和模拟器之间切换。模拟器先载入这一课推荐的例程。"""
+        if self.lesson is None:
+            return
+        if self.in_simulator:
+            self._leave_simulator()
+            return
+        index = self.lesson_index
+        program = self.lesson.sim_program
+        self.open_simulator(program)
+        self.sim_return = index
+
+    def _leave_simulator(self):
+        back = self.sim_return
+        if back is None:
+            self.show_menu()
+        else:
+            self.open_lesson(back)
+
+    def _escape(self):
+        if self.in_simulator and self.sim_return is not None:
+            self._leave_simulator()
+        else:
+            self.show_menu()
+
+    def _open(self, cls, index, title, *args):
         self._close_lesson()
         self.menu.hide()
         self.menu_scene.hide()
         self.nav.show()
-        self.chip_map.show()
+        self.roadmap.show()
+        if cls.show_chip_map:
+            self.chip_map.show()
+        else:
+            self.chip_map.hide()
         if self.panel_visible:
             self.panel.show()
             self.hint_text.show()
-        self.lesson_index = index
-        cls = LESSONS[index]
-        self.lesson = cls(self)
-        self.title_text.setText("第 %d 课  %s" % (index + 1, cls.title))
+        self.in_simulator = cls is SimulatorLesson
+        self.panel_w = SIM_PANEL_W if cls.sim_layout else PANEL_W
+        self.panel["frameSize"] = (0, self.panel_w, -2.0, 0)
+        if index is not None:
+            self.lesson_index = index
+        self.lesson = cls(self, *args)
+        self.title_text.setText(title)
         self.body_offset = 0
         self.update_chip_map(cls.location)
-        hints = cls.hints.strip()
+        self.update_roadmap(index)
+        hints = cls.lesson_hints().strip()
         self.set_hints((hints + "\n\n" if hints else "") + GLOBAL_HINTS)
         self.set_body("")
         self.orbit.set_view(*cls.camera)
@@ -430,11 +555,20 @@ class MCUApp(ShowBase):
     def _update_film_offset(self):
         # 面板挡住了左边一块，把 3D 画面的中心往右挪一点
         lens = self.camLens
-        if self.lesson is not None and self.panel_visible:
-            frac = PANEL_W / (2 * self.getAspectRatio())
-            lens.setFilmOffset(-lens.getFilmSize()[0] * frac / 2, 0)
-        else:
+        if self.lesson is None:
             lens.setFilmOffset(0, 0)
+            return
+        aspect = self.getAspectRatio()
+        left = self.panel_w if self.panel_visible else 0.0
+        if self.lesson.sim_layout:
+            # 模拟器：右边是数据面板，下面是“这一拍”说明，3D 画面放在中间偏上
+            from .sim.view import RW
+            cx = (left - RW - 0.02) / 2
+            cz = 0.2
+        else:
+            cx, cz = left / 2, 0.0
+        fw, fh = lens.getFilmSize()
+        lens.setFilmOffset(-fw * cx / (2 * aspect), -fh * cz / 2)
 
     def step(self, dt):
         """推进一帧逻辑（测试里也会直接调用）。"""
