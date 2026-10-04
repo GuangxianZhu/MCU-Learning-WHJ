@@ -9,16 +9,29 @@ from panda3d.core import (AmbientLight, BitMask32, ClockObject,
                           DirectionalLight, TextNode, WindowProperties,
                           loadPrcFileData)
 
-from . import parts, theme, ui
+from . import glossary, parts, theme, ui
 from .lessons import LESSONS, UPCOMING
 from .lessons.base import PICK_MASK
 
 PANEL_W = 1.25      # 左侧讲解面板宽度（aspect2d 单位）
 BODY_SCALE = 0.042  # 讲解文字大小
 
-GLOBAL_HINTS = ("鼠标：右键或拖动旋转视角，滚轮缩放，左键点选物体\n"
+GLOBAL_HINTS = ("鼠标：拖动旋转视角，滚轮缩放，左键点选物体\n"
+                "讲解太长时：鼠标放在面板上滚动滚轮，或按 PageUp/PageDown\n"
                 "Home 重置视角   Tab 隐藏/显示面板\n"
                 "[ 上一课   ] 下一课   Esc 课程菜单")
+
+# 右上角“芯片地图”：(标识, 名称, 颜色, 列, 行)，和第 2 课的布局一致
+CHIP_MAP = [
+    ("cpu", "CPU", theme.CPU, 0, 0), ("nvic", "中断", theme.NVIC, 1, 0),
+    ("flash", "Flash", theme.FLASH, 2, 0), ("sram", "SRAM", theme.SRAM, 3, 0),
+    ("clock", "时钟", theme.CLOCK, 4, 0),
+    ("gpio", "GPIO", theme.GPIO, 0, 1), ("tim", "定时器", theme.TIMER, 1, 1),
+    ("uart", "UART", theme.UART, 2, 1), ("i2c", "I2C/SPI", theme.I2C_SPI, 3, 1),
+    ("adc", "ADC", theme.ADC, 4, 1),
+]
+UP_HINT = "……（上面还有，滚轮向上 / PageUp）"
+DOWN_HINT = "……（下面还有，滚轮向下 / PageDown）"
 
 
 class OrbitCamera:
@@ -36,8 +49,6 @@ class OrbitCamera:
         for btn in ("mouse2", "mouse3"):
             base.accept(btn, self.start_drag, [btn])
             base.accept(btn + "-up", self.stop_drag, [btn])
-        base.accept("wheel_up", self.zoom, [0.9])
-        base.accept("wheel_down", self.zoom, [1.1])
         self.apply()
 
     def set_view(self, dist, h, p, target):
@@ -121,8 +132,10 @@ class MCUApp(ShowBase):
         self.accept("escape", self.show_menu)
         self.accept("[", self.prev_lesson)
         self.accept("]", self.next_lesson)
-        self.accept("page_up", self.prev_lesson)
-        self.accept("page_down", self.next_lesson)
+        self.accept("page_up", self.scroll_body, [-8])
+        self.accept("page_down", self.scroll_body, [8])
+        self.accept("wheel_up", self._wheel, [-1])
+        self.accept("wheel_down", self._wheel, [1])
         self.accept("home", self.orbit.reset)
         self.accept("tab", self.toggle_panel)
         self.accept("mouse1", self._mouse1_down)
@@ -179,6 +192,8 @@ class MCUApp(ShowBase):
     def _mouse1_up(self):
         if self.orbit.stop_drag("mouse1"):
             return  # 拖动旋转，不算点击
+        if self.mouse_over_panel():
+            return
         tag = self.pick_under_mouse()
         if tag and self.lesson:
             self.lesson.on_pick(tag)
@@ -187,7 +202,11 @@ class MCUApp(ShowBase):
     def _setup_panel(self):
         self.panel = DirectFrame(parent=self.a2dTopLeft,
                                  frameColor=(0.04, 0.05, 0.08, 0.85),
-                                 frameSize=(0, PANEL_W, -2.0, 0))
+                                 frameSize=(0, PANEL_W, -2.0, 0),
+                                 suppressMouse=0)
+        self.body_lines = []
+        self.body_offset = 0
+        self.hint_lines = 1
         self.title_text = OnscreenText(
             parent=self.panel, pos=(0.06, -0.11), scale=0.066,
             align=TextNode.ALeft, font=self.font, fg=theme.ACCENT,
@@ -211,12 +230,107 @@ class MCUApp(ShowBase):
                          frameColor=(0.15, 0.17, 0.24, 0.9), pad=(0.5, 0.3),
                          text_fg=theme.TEXT, relief=DGG.FLAT)
 
+        self._setup_chip_map()
+
+    def _setup_chip_map(self):
+        """右上角的芯片地图：亮起的模块就是本课讲的部分。"""
+        self.chip_map = DirectFrame(parent=self.a2dTopRight,
+                                    frameColor=(0.04, 0.05, 0.08, 0.75),
+                                    frameSize=(-0.8, -0.03, -0.43, -0.14))
+        OnscreenText(parent=self.chip_map, text="芯片地图：亮的是本课讲的部分",
+                     pos=(-0.415, -0.18), scale=0.024, font=self.font,
+                     fg=theme.TEXT_DIM)
+        self.map_cells = {}
+        w, h, gap = 0.138, 0.075, 0.012
+        for key, name, color, col, row in CHIP_MAP:
+            x0 = -0.775 + col * (w + gap)
+            z1 = -0.2 - row * (h + 0.05)
+            cell = DirectFrame(parent=self.chip_map, frameColor=color,
+                               frameSize=(x0, x0 + w, z1 - h, z1))
+            OnscreenText(parent=cell, text=name, pos=(x0 + w / 2, z1 - h / 2 - 0.008),
+                         scale=0.023, font=self.font, fg=theme.TEXT)
+            self.map_cells[key] = (cell, color)
+        self.map_bus = DirectFrame(parent=self.chip_map, frameColor=(0.9, 0.78, 0.4, 1),
+                                   frameSize=(-0.775, -0.055, -0.307, -0.293))
+        self.map_pins = OnscreenText(parent=self.chip_map, text="", pos=(-0.415, -0.415),
+                                     scale=0.022, font=self.font, fg=theme.ACCENT)
+
+    def update_chip_map(self, location):
+        everything = "all" in location
+        for key, (cell, color) in self.map_cells.items():
+            on = everything or key in location
+            cell["frameColor"] = color if on else theme.scale(color, 0.22)
+        bus_on = everything or "bus" in location
+        self.map_bus["frameColor"] = (0.9, 0.78, 0.4, 1) if bus_on else (0.25, 0.22, 0.12, 1)
+        self.map_pins.setText("+ 芯片外面的引脚与电路" if (everything or "pins" in location)
+                              else "")
+
+    def compose_body(self, text):
+        """给每课的讲解加上“在 MCU 的哪里”和“本课新词”。"""
+        lesson = self.lesson
+        if lesson is None:
+            return text
+        parts_ = []
+        if lesson.location_text:
+            parts_.append("【在 MCU 的哪里】\n" + lesson.location_text)
+        if text:
+            parts_.append(text)
+        terms = glossary.explain(lesson.terms)
+        if terms:
+            parts_.append("【本课新词】\n" + terms)
+        return "\n\n".join(parts_)
+
     def set_body(self, text):
-        self.body_text.setText(ui.wrap(text, (PANEL_W - 0.14) / BODY_SCALE))
+        wrapped = ui.wrap(self.compose_body(text), (PANEL_W - 0.14) / BODY_SCALE)
+        self.body_lines = wrapped.split("\n")
+        self._render_body()
+
+    def body_capacity(self):
+        line_h = BODY_SCALE * self.font.getLineHeight()
+        hint_h = 0.06 + self.hint_lines * 0.034 * self.font.getLineHeight()
+        return max(5, int((2.0 - 0.21 - hint_h - 0.08) / line_h))
+
+    def _render_body(self):
+        cap = self.body_capacity()
+        lines = self.body_lines
+        max_off = max(0, len(lines) - cap + 2)
+        self.body_offset = max(0, min(self.body_offset, max_off))
+        off = self.body_offset
+        shown = []
+        room = cap
+        if off > 0:
+            shown.append(UP_HINT)
+            room -= 1
+        rest = lines[off:]
+        if len(rest) > room:
+            shown += rest[:room - 1] + [DOWN_HINT]
+        else:
+            shown += rest
+        self.body_text.setText("\n".join(shown))
+
+    def scroll_body(self, delta):
+        if self.lesson is None:
+            return
+        self.body_offset += delta
+        self._render_body()
+
+    def mouse_over_panel(self):
+        mw = self.mouseWatcherNode
+        if (self.lesson is None or not self.panel_visible or mw is None
+                or not mw.hasMouse()):
+            return False
+        return (mw.getMouseX() + 1) * self.getAspectRatio() < PANEL_W
+
+    def _wheel(self, direction):
+        if self.mouse_over_panel():
+            self.scroll_body(3 * direction)
+        else:
+            self.orbit.zoom(1.1 if direction > 0 else 0.9)
 
     def set_hints(self, text):
         text = ui.wrap(text, (PANEL_W - 0.14) / 0.034)
         n = text.count("\n") + 1
+        self.hint_lines = n
         self.hint_text.setText(text)
         self.hint_text.setPos(0.06, 0.06 + (n - 1) * 0.034 * 1.2)
 
@@ -269,6 +383,7 @@ class MCUApp(ShowBase):
         self.panel.hide()
         self.hint_text.hide()
         self.nav.hide()
+        self.chip_map.hide()
         self.orbit.set_view(16, 20, -35, (0, 0, 0))
 
     # ------------------------------------------------------------ 课程切换
@@ -283,6 +398,7 @@ class MCUApp(ShowBase):
         self.menu.hide()
         self.menu_scene.hide()
         self.nav.show()
+        self.chip_map.show()
         if self.panel_visible:
             self.panel.show()
             self.hint_text.show()
@@ -290,9 +406,11 @@ class MCUApp(ShowBase):
         cls = LESSONS[index]
         self.lesson = cls(self)
         self.title_text.setText("第 %d 课  %s" % (index + 1, cls.title))
-        self.set_body("")
+        self.body_offset = 0
+        self.update_chip_map(cls.location)
         hints = cls.hints.strip()
         self.set_hints((hints + "\n\n" if hints else "") + GLOBAL_HINTS)
+        self.set_body("")
         self.orbit.set_view(*cls.camera)
         self.lesson.setup()
 

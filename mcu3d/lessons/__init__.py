@@ -7,6 +7,9 @@ from .l04_gpio import GPIOLesson
 from .l05_clock_interrupt import ClockInterrupt
 from .l06_timer_pwm import TimerPWM
 from .l07_uart import UARTLesson
+from .l08_i2c_spi import I2CSPILesson
+from .l09_adc import ADCLesson
+from .l10_project import ProjectLesson
 
 LESSONS = [
     WhatIsMCU,
@@ -16,11 +19,10 @@ LESSONS = [
     ClockInterrupt,
     TimerPWM,
     UARTLesson,
+    I2CSPILesson,
+    ADCLesson,
+    ProjectLesson,
 ]
 
 # 还没做 3D 演示的课程（菜单里显示为“制作中”），格式：(标题, 一句话简介)
-UPCOMING = [
-    ("I2C 与 SPI", "两根线挂一串设备 / 四根线高速传输"),
-    ("ADC 模数转换", "把温度、光线变成数字"),
-    ("综合项目", "做一个温度报警器"),
-]
+UPCOMING = []

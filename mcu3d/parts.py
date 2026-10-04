@@ -168,6 +168,10 @@ class Packet:
         self.done = False
         self.np.setPos(self.path[0])
 
+    def destroy(self):
+        self.done = True
+        self.np.removeNode()
+
     def update(self, dt):
         if self.done:
             return
@@ -193,6 +197,69 @@ class Packet:
         a, b = self.path[self.seg], self.path[self.seg + 1]
         self.np.setPos(a + (b - a) * self.t)
         self.np.setH(self.np.getH() + 180 * dt)
+
+
+class BitTrain:
+    """一串比特方块沿直线依次前进（第 0 个打头）。
+
+    bits: 0/1 列表；labels: 每个方块上显示的字（默认显示 0/1）；
+    on_bit(i): 第 i 个方块到达终点时调用；on_done(): 全部到达后调用。
+    """
+
+    def __init__(self, parent, bits, start, end, bit_time=0.4, spacing=0.8,
+                 labels=None, colors=None, size=0.45, on_bit=None, on_done=None):
+        self.start = Vec3(*start)
+        self.end = Vec3(*end)
+        self.length = (self.end - self.start).length()
+        self.dir = (self.end - self.start) / max(self.length, 1e-6)
+        self.bit_time = bit_time
+        self.speed = spacing / bit_time
+        self.on_bit = on_bit
+        self.on_done = on_done
+        self.t = 0.0
+        self.arrived = 0
+        self.done = False
+        self.root = parent.attachNewNode("bit-train")
+        self.cubes = []
+        for i, b in enumerate(bits):
+            color = colors[i] if colors else (theme.HIGH if b else theme.LOW)
+            cube = shapes.box((size, size, size), color, "bit")
+            cube.reparentTo(self.root)
+            cube.setLightOff(1)
+            text = labels[i] if labels else str(b)
+            text3d(text, cube, (0, 0, size + 0.15), scale=0.32, color=theme.TEXT)
+            cube.hide()
+            self.cubes.append(cube)
+
+    def current_index(self):
+        """发送端此刻正在送出的是第几个比特。"""
+        return int(self.t / self.bit_time)
+
+    def destroy(self):
+        self.done = True
+        self.root.removeNode()
+
+    def update(self, dt):
+        if self.done:
+            return
+        self.t += dt
+        for i, cube in enumerate(self.cubes):
+            s = (self.t - i * self.bit_time) * self.speed
+            if s < 0:
+                continue
+            if s >= self.length:
+                cube.hide()
+                if i >= self.arrived:
+                    self.arrived = i + 1
+                    if self.on_bit:
+                        self.on_bit(i)
+                continue
+            cube.show()
+            cube.setPos(self.start + self.dir * s)
+        if self.arrived >= len(self.cubes):
+            self.destroy()
+            if self.on_done:
+                self.on_done()
 
 
 def pulse(t, speed=4.0):
