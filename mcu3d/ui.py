@@ -8,7 +8,8 @@ import glob
 import os
 import re
 
-from panda3d.core import BillboardEffect, Filename, TextNode
+from panda3d.core import (BillboardEffect, Filename, TextNode, TextProperties,
+                          TextPropertiesManager)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET_FONTS = os.path.join(os.path.dirname(_HERE), "assets", "fonts")
@@ -68,6 +69,31 @@ def load_font(loader):
 
 def get_font():
     return _font
+
+
+# 文字里可以用 "\1hi\1文字\2" 给一段字单独上色
+TEXT_COLORS = {
+    "hi": (1.0, 0.62, 0.2, 1),      # 橙：1、刚写入、正在执行
+    "dim": (0.5, 0.53, 0.6, 1),     # 灰：次要
+    "acc": (1.0, 0.82, 0.25, 1),    # 黄：强调
+    "blue": (0.45, 0.7, 1.0, 1),    # 蓝：读
+    "red": (1.0, 0.35, 0.3, 1),     # 红：错误
+    "green": (0.4, 0.95, 0.5, 1),   # 绿
+    "purple": (0.78, 0.55, 1.0, 1),  # 紫：地址线
+    "cyan": (0.35, 0.88, 1.0, 1),   # 青：数据线
+}
+
+
+def register_text_colors():
+    mgr = TextPropertiesManager.getGlobalPtr()
+    for name, color in TEXT_COLORS.items():
+        tp = TextProperties()
+        tp.setTextColor(*color)
+        mgr.setProperties(name, tp)
+
+
+def colored(name, text):
+    return "\1%s\1%s\2" % (name, text)
 
 
 def text3d(text, parent, pos=(0, 0, 0), scale=0.5, color=(1, 1, 1, 1),

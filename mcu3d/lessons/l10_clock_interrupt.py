@@ -1,4 +1,4 @@
-"""第 5 课：时钟与中断。"""
+"""第 10 课：时钟与中断。"""
 
 from .. import parts, theme
 from ..ui import set_text
@@ -35,6 +35,11 @@ class ClockInterrupt(Lesson):
         "PC 是 CPU 内部的寄存器；栈是 SRAM 里划出来的一块区域；"
         "按键接在 GPIO 引脚上，引脚电平变化经“外部中断”线路把请求送到 NVIC，"
         "再由 NVIC 通知 CPU。")
+    link_text = (
+        "中断用到第 7 课的栈：CPU 跳去处理中断前，要把“回来的地址”和寄存器压进栈。上一课定时器的更新事件、下一课 UART 收到数据，都可以触发中断。")
+    apply_text = (
+        "用中断代替“一直问”（轮询）；知道中断服务函数为什么要写得短。温度报警器用定时器中断每 0.5 秒采一次温度。")
+    sim_program = "calls"
     terms = ["时钟", "晶振", "频率", "指令", "PC", "中断", "NVIC", "ISR", "栈", "现场",
              "轮询"]
 

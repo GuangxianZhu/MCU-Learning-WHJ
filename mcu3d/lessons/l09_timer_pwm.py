@@ -1,4 +1,4 @@
-"""第 6 课：定时器与 PWM。"""
+"""第 9 课：定时器与 PWM。"""
 
 from .. import parts, theme
 from ..ui import set_text
@@ -41,6 +41,11 @@ class TimerPWM(Lesson):
         "定时器外设 TIM（芯片下排黄色那块）。CNT、PSC、ARR、CCR 都是定时器外设里的寄存器"
         "（TIM2 从地址 0x4000 0000 开始）；计数用的时钟来自 RCC；"
         "PWM 要从引脚输出，所以借用一个 GPIO 引脚，把它设成“复用功能”交给定时器控制。")
+    link_text = (
+        "定时器和 GPIO 一样，用写寄存器（PSC、ARR、CCR）来设置；它数满一圈产生的“更新事件”，就是下一课中断的来源之一。")
+    apply_text = (
+        "精确定时、调 LED 亮度、控制电机和舵机。温度报警器里用 PWM 驱动蜂鸣器。")
+    sim_program = "inc"
     terms = ["定时器", "CNT", "PSC", "ARR", "CCR", "更新事件", "PWM", "占空比", "频率"]
 
     def setup(self):

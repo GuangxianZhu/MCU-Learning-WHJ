@@ -154,12 +154,12 @@ class Packet:
     """沿折线路径匀速移动的小方块（代表在总线/导线上传输的数据）。"""
 
     def __init__(self, parent, path, color=theme.ACCENT, speed=6.0, size=0.45,
-                 label=None, on_done=None):
+                 label=None, on_done=None, label_scale=0.35):
         self.np = shapes.box((size, size, size), color, "packet")
         self.np.reparentTo(parent)
         self.np.setLightOff(1)
         if label:
-            text3d(label, self.np, (0, 0, size + 0.4), scale=0.35, color=theme.TEXT)
+            text3d(label, self.np, (0, 0, size + 0.4), scale=label_scale, color=theme.TEXT)
         self.path = [Vec3(*p) for p in path]
         self.speed = speed
         self.seg = 0

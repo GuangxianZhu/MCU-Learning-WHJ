@@ -1,4 +1,4 @@
-"""第 7 课：UART 串口通信——拆开 UART 外设看它的内部组成。"""
+"""第 11 课：UART 串口通信——拆开 UART 外设看它的内部组成。"""
 
 import string
 
@@ -34,7 +34,7 @@ INTRO = (
 class UARTLesson(Lesson):
     title = "UART 串口通信"
     summary = "拆开串口外设，看一个字节怎么发出去"
-    hints = ("键盘打字（字母/数字） 发送该字符   空格 发送 \"Hi\"\n"
+    hints = ("键盘打字（字母/数字，小写 s 除外） 发送该字符   空格 发送 \"Hi\"\n"
              "上下方向键 调整速度")
     camera = (38, 0, -52, (0.3, 0.3, 0.5))
     location = ["uart", "cpu", "clock", "bus", "pins"]
@@ -43,6 +43,11 @@ class UARTLesson(Lesson):
         "波特率发生器都在 UART 外设内部；TX、RX 是借给 UART 使用的两个 GPIO 引脚。"
         "CPU 通过总线读写 TDR / RDR，就像读写一个普通变量一样"
         "（STM32F103 的 USART1 数据寄存器地址是 0x4001 3804）。")
+    link_text = (
+        "CPU 写 TDR 就是第 4 课的一次总线写；波特率来自第 9 课讲的时钟分频；RXNE 置 1 可以触发上一课的中断。下一课的 I2C/SPI 是另外两种串行通信。")
+    apply_text = (
+        "用串口打印调试信息，和电脑、蓝牙模块、GPS 模块通信。温度报警器用它把温度发给电脑。")
+    sim_program = "inc"
     terms = ["UART", "串行", "异步", "TX", "RX", "GND", "波特率", "帧", "起始位",
              "停止位", "ASCII", "移位寄存器", "TDR", "RDR", "状态寄存器", "标志位",
              "TXE", "RXNE", "波特率发生器"]
@@ -74,7 +79,8 @@ class UARTLesson(Lesson):
         self.label("GND 地线", (0, GND_Y + 0.4, Z), 0.24, theme.TEXT_DIM)
 
         for ch in string.ascii_lowercase + string.digits:
-            self.accept(ch, self.send, [ch])
+            if ch != "s":          # S 键留给“芯片内部模拟器”，小写 s 不能打
+                self.accept(ch, self.send, [ch])
         for ch in string.ascii_lowercase:
             self.accept("shift-" + ch, self.send, [ch.upper()])
         self.accept("space", self.send, ["Hi"])
