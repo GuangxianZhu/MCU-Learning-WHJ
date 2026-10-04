@@ -26,6 +26,9 @@ KEYS = {
     4: ["space", "arrow_up"],
     5: ["arrow_up", "space", "arrow_down", "f"],
     6: ["shift-a", "space", "arrow_up"],
+    7: ["1", "m", "2"],
+    8: ["r", "arrow_up", "arrow_left", "r"],
+    9: ["h", "arrow_down"],
 }
 
 _app = None
@@ -66,6 +69,11 @@ def test_all_lessons():
         run_frames(app, 90)
         if i == 3:
             app.messenger.send("b-up")
+        if i == 9:
+            run_frames(app, 120)   # 继续加热，等温度超过阈值触发报警
+            app.messenger.send("h-up")
+        app.messenger.send("page_down")
+        app.messenger.send("page_up")
         shot(app, "%02d_%s" % (i + 1, LESSONS[i].__name__))
         assert app.lesson is not None
     app.next_lesson()

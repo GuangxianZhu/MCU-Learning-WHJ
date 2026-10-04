@@ -13,6 +13,7 @@ SLAB_TOP, SLAB_STEP = 4.0, 0.9
 
 INTRO = ("【时钟】晶振不停地产生“高-低-高-低”的方波，每一次上升沿就是一拍。"
          "CPU 跟着节拍执行指令（这里简化成一拍执行一条）。"
+         "左列旁边的“PC →”就是程序计数器 PC：CPU 里记着“下一条执行哪一行”的寄存器。"
          "时钟频率越高，程序跑得越快。真实的 MCU 每秒有几千万拍，这里放慢了很多。\n\n"
          "【中断】主程序（左列）一直在循环做自己的事。按下按键时，"
          "中断控制器发出“中断请求”，CPU 执行完当前这条指令后，"
@@ -28,6 +29,14 @@ class ClockInterrupt(Lesson):
     summary = "心跳节拍，以及“先处理急事”"
     hints = "空格 按下按键（触发中断）   上下方向键 调整时钟快慢"
     camera = (36, 0, -14, (0.8, 0, 2.6))
+    location = ["clock", "cpu", "nvic", "sram", "gpio", "pins"]
+    location_text = (
+        "时钟（RCC 模块 + 芯片外的晶振）、CPU 内核、中断控制器 NVIC 和 SRAM。"
+        "PC 是 CPU 内部的寄存器；栈是 SRAM 里划出来的一块区域；"
+        "按键接在 GPIO 引脚上，引脚电平变化经“外部中断”线路把请求送到 NVIC，"
+        "再由 NVIC 通知 CPU。")
+    terms = ["时钟", "晶振", "频率", "指令", "PC", "中断", "NVIC", "ISR", "栈", "现场",
+             "轮询"]
 
     def setup(self):
         self.speed_i = 1
@@ -66,7 +75,7 @@ class ClockInterrupt(Lesson):
         self.irq_text = self.label("中断请求：无", (X_ISR, -0.4, 0.0), 0.3)
 
         # 栈
-        self.label("栈 Stack", (X_STACK, 0, 4.8), 0.42, theme.TEXT)
+        self.label("栈 Stack（在 SRAM 里）", (X_STACK, 0, 4.8), 0.36, theme.TEXT)
         self.box((2.8, 0.6, 0.1), (X_STACK, 0, 0.9), (0.4, 0.4, 0.45, 1))
         self.stack_nodes = []
 

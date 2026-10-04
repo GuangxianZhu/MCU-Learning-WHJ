@@ -58,11 +58,29 @@ BLOCKS = [
      "CPU 就能计算出温度了。"),
 ]
 
+ADDRESS = {
+    "cpu": "CPU 自己内部的寄存器（R0~R12、PC 等）没有地址，只有 CPU 自己能直接用。",
+    "flash": "地址范围（以常见的 STM32F103 为例）：0x0800 0000 开始。",
+    "sram": "地址范围（STM32F103）：0x2000 0000 开始。程序的变量和“栈”都在这里。",
+    "gpio": "GPIOA 的寄存器从地址 0x4001 0800 开始，GPIOB 从 0x4001 0C00 开始。",
+    "tim": "TIM2 的寄存器从地址 0x4000 0000 开始。",
+    "uart": "USART1 的寄存器从地址 0x4001 3800 开始。",
+    "i2c": "I2C1 的寄存器从地址 0x4000 5400 开始，SPI1 从 0x4001 3000 开始。",
+    "adc": "ADC1 的寄存器从地址 0x4001 2400 开始。",
+    "clock": "RCC（时钟控制）的寄存器从地址 0x4002 1000 开始。用之前要先在这里打开外设的时钟。",
+    "nvic": "NVIC 的寄存器在 0xE000 E100 开始，紧挨着 CPU 内核。",
+}
+
 INTRO = ("现在我们把芯片里的硅片放大来看。\n\n"
          "上排是“核心”：CPU、中断控制器、两种存储器、时钟。\n"
          "下排是“外设”：MCU 用来和外界打交道的各种功能模块。\n\n"
          "中间那条长长的通道叫“总线”（Bus），所有模块都挂在上面，"
          "数据就在总线上跑来跑去，就像城市里的主干道。\n\n"
+         "总线上每个模块都有自己的“地址”（门牌号）范围。以常见的 STM32F103 为例："
+         "Flash 从 0x0800 0000 开始，SRAM 从 0x2000 0000 开始，"
+         "所有外设的寄存器从 0x4000 0000 开始。CPU 想读写谁，就在总线上给出谁的地址"
+         "——这叫“内存映射”。所以“寄存器在哪”的答案是：外设寄存器长在各自的外设里，"
+         "但 CPU 用地址来找到它们。\n\n"
          "▶ 鼠标移到模块上会浮起，左键点击查看介绍。\n"
          "▶ 按空格，观看 CPU 执行一条“点灯”指令的全过程。")
 
@@ -85,6 +103,11 @@ class Architecture(Lesson):
     summary = "CPU、存储器、外设和总线"
     hints = "鼠标悬停 浮起模块   左键 查看介绍   空格 演示一条指令"
     camera = (31, 0, -55, (0, -0.8, 0))
+    location = ["all", "bus"]
+    location_text = ("芯片内部那片硅晶片的全貌：所有模块，以及把它们连在一起的总线。"
+                     "后面每一课都会单独放大其中一块，右上角的芯片地图会告诉你在哪。")
+    terms = ["内核", "指令", "PC", "寄存器", "总线", "地址", "内存映射", "外设寄存器",
+             "NVIC", "时钟", "频率"]
 
     def setup(self):
         self.box((17, 11, 0.2), (0, 0, 0.1), theme.DIE)
@@ -126,7 +149,9 @@ class Architecture(Lesson):
         for key, name, _, _, _, desc in BLOCKS:
             if key == tag:
                 self.selected = key
-                self.set_body(desc + "\n\n（点击其他模块继续探索，按空格看指令演示）")
+                extra = ADDRESS.get(key, "")
+                self.set_body(desc + ("\n\n" + extra if extra else "")
+                              + "\n\n（点击其他模块继续探索，按空格看指令演示）")
 
     # ---------- 指令演示 ----------
     def bus_path(self, a, b):
@@ -135,10 +160,7 @@ class Architecture(Lesson):
         return [(xa, ya, z), (xa, BUS_Y, z), (xb, BUS_Y, z), (xb, yb, z)]
 
     def start_demo(self):
-        for m in self.movers:
-            m.done = True
-            m.np.removeNode()
-        self.movers.clear()
+        self.clear_movers()
         self.led.set_on(False)
         self.demo_i = -1
         self.next_demo()

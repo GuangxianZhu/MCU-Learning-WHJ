@@ -19,6 +19,11 @@ class Lesson(DirectObject):
     title = "未命名"
     summary = ""
     hints = ""
+    # 本课讲的是 MCU 的哪些部分（右上角芯片地图会亮起）：
+    # cpu nvic flash sram clock gpio tim uart i2c adc bus pins，或 all
+    location = []
+    location_text = ""     # 面板开头“在 MCU 的哪里”的说明
+    terms = []             # 面板最后“本课新词”要解释的术语（见 glossary.py）
     # 相机初始视角：(距离, 水平角, 俯仰角, 观察点)
     camera = (22, 0, -40, (0, 0, 0))
 
@@ -50,6 +55,12 @@ class Lesson(DirectObject):
             if m.done:
                 self.movers.remove(m)
         self.update(dt)
+
+    def clear_movers(self):
+        """立刻删掉所有还在移动的数据包。"""
+        for m in self.movers:
+            m.destroy()
+        self.movers.clear()
 
     def destroy(self):
         self.ignoreAll()

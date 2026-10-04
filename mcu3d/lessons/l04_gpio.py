@@ -41,6 +41,7 @@ INTRO = ("GPIO（General Purpose Input/Output）= 通用输入输出口。\n\n"
          "写 0 输出 0V（低电平），LED 灭。\n"
          "· 输入：引脚上的电压会被记录到输入寄存器 IDR，程序读它就知道按键状态。\n\n"
          "引脚按组命名：PA0~PA15 属于 A 组（GPIOA），PB0 属于 B 组……\n"
+         "代码里的 GPIOA->ODR 是 C 语言写法，意思是“GPIOA 这个外设里的 ODR 寄存器”。\n"
          "（真实芯片里还要先通过 MODER 寄存器把引脚设成输出或输入，这里省略。）\n\n"
          "导线颜色：橙色 = 高电平 3.3V，蓝色 = 低电平 0V。")
 
@@ -50,6 +51,13 @@ class GPIOLesson(Lesson):
     summary = "写寄存器点灯，读寄存器知道按键"
     hints = "1~8 翻转 PA0~PA7   按住 B 按下按键   空格 切换程序"
     camera = (29, 0, -52, (0.5, 0, 0))
+    location = ["gpio", "bus", "pins"]
+    location_text = (
+        "GPIO 外设（芯片下排橙色那块）和它连着的引脚。ODR、IDR、MODER 这几个寄存器"
+        "都长在 GPIO 外设里面。以 STM32F103 为例，GPIOA 的寄存器从地址 0x4001 0800 开始，"
+        "其中 ODR 在 0x4001 080C。CPU 经过总线往这个地址写数字，"
+        "GPIO 外设就按每一位去改变对应引脚的电压。")
+    terms = ["GPIO", "端口", "电平", "ODR", "IDR", "MODER"]
 
     def setup(self):
         self.odr = 0
@@ -86,7 +94,7 @@ class GPIOLesson(Lesson):
         # 寄存器显示
         self.reg_cells = []
         self.reg_digits = []
-        self.label("GPIOA->ODR", (-7.3, 5.6, 0.4), 0.38, theme.ACCENT, align="left")
+        self.label("GPIOA->ODR\n（GPIOA 外设里\n地址 0x4001080C）", (-7.3, 6.0, 0.4), 0.32, theme.ACCENT, align="left")
         for bit in range(8):
             x = -2.5 + (7 - bit) * 0.95
             self.reg_cells.append(self.box((0.8, 0.8, 0.3), (x, 5.6, 0.15)))
