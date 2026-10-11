@@ -15,12 +15,13 @@ from mcu3d.app import MCUApp  # noqa: E402
 from mcu3d.lessons import LESSONS  # noqa: E402
 
 # 每课要模拟的鼠标点击（物体标签）
-SIM_PICKS = ["alu", "regs", "sram"]
-PICKS = {0: ["chip"], 1: ["bit5"], 2: SIM_PICKS, 3: SIM_PICKS, 4: SIM_PICKS,
+SIM_PICKS = ["cpu", "sram", "alu", "regfile", "fa3"]
+PICKS = {0: ["chip", "button"], 1: ["bit5"], 2: SIM_PICKS, 3: SIM_PICKS, 4: SIM_PICKS,
          5: SIM_PICKS, 6: SIM_PICKS}
 
 # 每课要模拟的按键（直接调用事件，相当于用户按下）
-SIM_KEYS = ["t", "t", "space", "space", "r", "arrow_up", "m", "i", "2", "z", "space"]
+SIM_KEYS = ["t", "t", "space", "space", "r", "arrow_up", "m", "i", "f", "2", "f", "z", "space",
+            "tab", "tab"]
 KEYS = {
     0: ["space", "space", "space", "space", "space"],
     1: ["1", "3", "8", "space", "arrow_left", "a"],
@@ -112,6 +113,51 @@ def test_simulator():
     assert app.lesson is None
 
 
+def test_schematic_levels():
+    """模拟器里双击一层层进到与非门，再 Backspace 一层层退回芯片。每层都边跑程序边看。"""
+    app = get_app()
+    app.open_lesson(5)                      # 第 6 课从 ALU 那一层开始
+    schem = app.lesson.view.schem
+    assert schem.key == "alu"
+    for _ in range(3):
+        app.messenger.send("arrow_up")
+    app.messenger.send("r")
+    run_frames(app, 60)
+    app.messenger.send("backspace")
+    app.messenger.send("backspace")
+    assert schem.key == "chip"
+    path = ["cpu", "regfile", "reg3", "dff0"]
+    for tag in path:
+        app.lesson.on_double_pick(tag)
+        run_frames(app, 40)
+        shot(app, "lv_%s" % tag)
+    assert schem.key == "dff" and len(schem.stack) == 5
+    for _ in range(3):
+        app.messenger.send("backspace")
+    app.lesson.on_double_pick("alu")
+    app.lesson.on_double_pick("fa2")
+    assert schem.key == "fa"
+    run_frames(app, 60)
+    shot(app, "lv_fa2")
+    app.lesson.on_double_pick("pc")        # 这一层没有 pc，什么都不该发生
+    assert schem.key == "fa"
+    app.messenger.send("home")
+    app.messenger.send("r")
+    assert app.lesson.view.fault is None
+
+
+def test_logic():
+    from mcu3d.schem import logic
+    for a in (0, 1):
+        for b in (0, 1):
+            for c in (0, 1):
+                p, s, g, t, co = logic.full_adder(a, b, c)
+                assert s + 2 * co == a + b + c
+    assert logic.AND(0, None) == 0 and logic.OR(1, None) == 1 and logic.NAND(1, None) is None
+    # 锁存器：使能时跟着 D，不使能时保持
+    assert logic.latch(1, 1, 0)[3] == 1 and logic.latch(1, 0, 0)[3] == 0
+
+
 def shot(app, name):
     out = os.environ.get("MCU3D_SHOTS")
     if out:
@@ -123,4 +169,6 @@ if __name__ == "__main__":
     test_menu()
     test_all_lessons()
     test_simulator()
+    test_schematic_levels()
+    test_logic()
     print("全部课程运行正常")

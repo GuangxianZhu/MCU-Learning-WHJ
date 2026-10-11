@@ -29,6 +29,7 @@ class Lesson(DirectObject):
     sim_program = "inc"    # 按 S 打开芯片内部模拟器时先载入的例程
     show_chip_map = True   # 右上角是否显示芯片地图
     sim_layout = False     # True：画面右边和下方是模拟器的数据面板
+    view2d = False         # True：这一课是平面电路图（Logisim 风格），相机只能平移和缩放
     # 相机初始视角：(距离, 水平角, 俯仰角, 观察点)
     camera = (22, 0, -40, (0, 0, 0))
 
@@ -55,6 +56,10 @@ class Lesson(DirectObject):
 
     def on_hover(self, tag):
         """鼠标悬停的物体变化时调用，tag 可能为 None。"""
+
+    def on_double_pick(self, tag):
+        """双击了带 tag 的物体。默认和单击一样。"""
+        self.on_pick(tag)
 
     # ---- 框架调用 ----
     def _tick(self, dt):

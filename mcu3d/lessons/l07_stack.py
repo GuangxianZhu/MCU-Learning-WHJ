@@ -27,6 +27,7 @@ INTRO = (
 
 
 class StackLesson(SimLesson):
+    sheet = "cpu"
     title = "函数调用与栈"
     summary = "BL、LR、PUSH、POP"
     programs = ["calls"]
