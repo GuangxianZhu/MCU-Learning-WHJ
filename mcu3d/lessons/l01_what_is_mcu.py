@@ -1,5 +1,6 @@
 """第 1 课：什么是 MCU。"""
 
+from .. import log as applog
 from .. import parts, theme
 from ..schem.draw import ACTIVE, INK, Canvas
 from .base import Lesson
@@ -12,7 +13,9 @@ STEPS = [
      "画面中间是一张“电路图”：用方块表示元件、用线表示导线，"
      "就是后面芯片内部模拟器的那种画法（和电路仿真软件 Logisim 一样）。\n\n"
      "中间这块黑色的大方块就是一颗 MCU，它焊在电路板（PCB）上，"
-     "右边通过导线接着一个 LED 灯和一个按键。"),
+     "右边通过导线接着一个 LED 灯和一个按键。\n\n"
+     "芯片里已经烧好了一个小程序：一直盯着按键，按键按下就点亮 LED。"
+     "用鼠标左键点一下右上角的“按键”试试，再点一下就松开。"),
     ("看芯片两边一根根伸出来的小短线（正在闪），它们叫“引脚”（Pin），"
      "每根都有名字：PA0、PA5、VDD……\n\n"
      "引脚是 MCU 和外界交流的唯一通道：\n"
@@ -21,7 +24,11 @@ STEPS = [
      "· 通信：用几根引脚和别的芯片“说话”\n\n"
      "电路图里的线，在真实电路板上就是一条条铜做的“走线”，把引脚连到 LED 和按键。\n\n"
      "线的颜色表示它现在的电压：亮绿是 1（高电压），深绿是 0（低电压）。"
-     "点一下右边的按键试试：按下时 PA0 那根线变成亮绿。"),
+     "点一下右边的按键试试，按下以后会发生三件事：\n"
+     "① 按键把 PA0 接到 3.3V，PA0 那根线变成亮绿（输入 = 1）\n"
+     "② 芯片里的程序读到 PA0 是 1，就让 PA5 输出 1，PA5 那根线也变亮绿\n"
+     "③ 电流从 PA5 经过电阻流进 LED，LED 亮了\n"
+     "注意按键和 LED 之间没有直接连线：是芯片里的程序把“输入”变成了“输出”。"),
     ("黑色外壳叫“封装”，作用是保护里面娇嫩的东西。\n\n"
      "我们把外壳揭开……里面是一小片灰色的硅片，叫“晶片”（Die）。"
      "真实的晶片只有指甲盖大小，上面有几百万个晶体管。\n\n"
@@ -43,7 +50,7 @@ STEPS = [
      "1. 上电后，CPU 从 Flash 里读出程序\n"
      "2. 一条一条地执行指令\n"
      "3. 通过引脚控制外面的东西\n\n"
-     "看，现在芯片里的程序正在让 LED 一闪一闪：PA5 那根线变成亮绿表示"
+     "看，现在换了一个程序，它不看按键，只是让 LED 一闪一闪：PA5 那根线变成亮绿表示"
      "引脚输出了高电压（1，灯亮），深绿表示低电压（0，灯灭）。\n\n"
      "这就是最经典的第一个单片机程序——“点灯”。恭喜你完成第 1 课！"),
 ]
@@ -65,7 +72,7 @@ def _pin_z(k):
 class WhatIsMCU(Lesson):
     title = "什么是 MCU"
     summary = "一台缩进芯片里的小电脑"
-    hints = "空格 下一步   退格 上一步   左键点芯片 打开/合上外壳   左键点按键 按下/松开"
+    hints = "空格 下一步   退格 上一步   左键点芯片 打开/合上外壳   左键点按键 按下/松开（按下 LED 亮）"
     view2d = True
     bounds = (-4, -1, 43, 25)
     location = ["all", "pins"]
@@ -83,6 +90,8 @@ class WhatIsMCU(Lesson):
         self.lid_open = False
         self.blink_t = 0.0
         self.pressed = False
+        self.led_on = False
+        self.note = ""
         c = self.canvas = Canvas(self)
         x0, z0, x1, z1 = self.bounds
         c.paper(x0, z0, x1, z1)
@@ -135,7 +144,9 @@ class WhatIsMCU(Lesson):
         c.text("按键", 32, z + 1.3, 0.6, INK, "center")
         c.line([(33, z), (35, z), (35, z + 2.5)], INK, 0.12)
         c.text("3.3V", 35, z + 2.8, 0.55, INK, "center")
-        c.text("（点一下按下 / 松开）", 32, z - 1.9, 0.45, INK, "center")
+        c.text("（点一下按下 / 再点松开）", 32, z - 1.9, 0.45, INK, "center")
+        # 电路图右下角直接写出芯片里的程序在做什么，不用去翻左边的讲解
+        self.prog_text = c.text("", 23, 3.6, 0.7, INK)
 
         self.accept("space", self.next_step)
         self.accept("backspace", self.prev_step)
@@ -163,13 +174,18 @@ class WhatIsMCU(Lesson):
 
     def show_step(self):
         i = self.step_i
-        text = STEPS[i]
-        nav = "\n\n（第 %d / %d 步，按空格继续）" % (i + 1, len(STEPS))
-        self.set_body(text + nav)
+        applog.log.debug("第 1 课：第 %d 步", i + 1)
+        self.note = ""
         self.lid_open = i in (2, 3, 4)
+        self.show_text()
         if i == 0:
             self.home()
         self.refresh()
+
+    def show_text(self):
+        i = self.step_i
+        nav = "\n\n（第 %d / %d 步，按空格继续）" % (i + 1, len(STEPS))
+        self.set_body(STEPS[i] + ("\n\n" + self.note if self.note else "") + nav)
 
     def on_pick(self, tag):
         if tag == "chip":
@@ -177,7 +193,18 @@ class WhatIsMCU(Lesson):
             self.refresh()
         elif tag == "button":
             self.pressed = not self.pressed
+            if self.step_i == 5:
+                self.note = ("现在跑的是闪灯程序，它不读按键，所以按键不影响 LED。"
+                             "按退格回到前面几步，按键就又能控制 LED 了。")
+            else:
+                self.note = ("按键%s：PA0 = %d → 程序让 PA5 = %d → LED %s。"
+                             % (("按下", 1, 1, "亮") if self.pressed else ("松开", 0, 0, "灭")))
+            self.show_text()
             self.refresh()
+        elif tag == "led":
+            self.note = ("LED 本身不能点，它只听 PA5 的：点右上角的“按键”让程序点亮它，"
+                         "或者一直按空格到第 6 步看它自己闪。")
+            self.show_text()
 
     def refresh(self):
         open_ = self.lid_open
@@ -193,9 +220,8 @@ class WhatIsMCU(Lesson):
         self.btn_wire.set(int(self.pressed))
         self.btn.set_fill(ACTIVE if self.pressed else (1, 1, 1, 1))
         if self.step_i != 5:
-            for w in self.led_wire:
-                w.set(0)
-            self.led.set_fill(LED_OFF)
+            # 前几步芯片里的程序是：PA5 = PA0（按键按下就点灯）
+            self.set_led(self.pressed)
         if self.step_i != 1:
             for p in self.pin_shapes:
                 p.set_fill(INK)
@@ -207,7 +233,20 @@ class WhatIsMCU(Lesson):
                 p.set_fill(ACTIVE if on else INK)
         if self.step_i == 5:
             self.blink_t += dt
-            on = (self.blink_t % 1.0) < 0.5
-            for w in self.led_wire:
-                w.set(int(on))
-            self.led.set_fill(LED_ON if on else LED_OFF)
+            self.set_led((self.blink_t % 1.0) < 0.5, quiet=True)
+
+    def set_led(self, on, quiet=False):
+        on = bool(on)
+        if on != self.led_on and not quiet:
+            applog.log.info("第 1 课：LED %s（PA0=%d PA5=%d）", "亮" if on else "灭",
+                            int(self.pressed), int(on))
+        self.led_on = on
+        for w in self.led_wire:
+            w.set(int(on))
+        self.led.set_fill(LED_ON if on else LED_OFF)
+        if self.step_i == 5:
+            prog = "芯片里的程序：让 PA5 每 0.5 秒翻转一次\n（这个程序不看按键）"
+        else:
+            prog = ("芯片里的程序：一直读 PA0，把读到的值写给 PA5\n现在 PA0=%d → PA5=%d → LED %s"
+                    % (int(self.pressed), int(on), "亮" if on else "灭"))
+        self.prog_text.node().setText(prog)

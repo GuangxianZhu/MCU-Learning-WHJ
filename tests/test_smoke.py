@@ -87,6 +87,23 @@ def test_all_lessons():
     assert app.lesson is None
 
 
+def test_lesson1_button_lights_led():
+    """第 1 课：按键按下 → 程序让 PA5 输出 1 → LED 亮；再点松开 → 灭。"""
+    app = get_app()
+    app.open_lesson(0)
+    run_frames(app, 3)
+    lesson = app.lesson
+    assert not lesson.led_on
+    lesson.on_pick("button")
+    run_frames(app, 3)
+    assert lesson.led_on and "LED 亮" in lesson.note
+    lesson.on_pick("led")
+    assert "按键" in lesson.note
+    lesson.on_pick("button")
+    run_frames(app, 3)
+    assert not lesson.led_on
+
+
 def test_simulator():
     """从一课按 S 打开模拟器，把每个例程都跑一阵，再按 Esc 回到原来那课。"""
     from mcu3d.sim.programs import ORDER
