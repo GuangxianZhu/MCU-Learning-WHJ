@@ -10,6 +10,7 @@ from panda3d.core import (AmbientLight, BitMask32, ClockObject,
                           WindowProperties, loadPrcFileData)
 
 from . import glossary, parts, theme, ui
+from .keypad import KeyPad, lesson_keys
 from .lessons import LESSONS, STAGES, UPCOMING, SimulatorLesson, stage_of
 from .lessons.base import PICK_MASK
 
@@ -173,7 +174,7 @@ class PanCamera:
 
 
 class MCUApp(ShowBase):
-    def __init__(self, start_lesson=None, offscreen=False):
+    def __init__(self, start_lesson=None, offscreen=False, keypad=False):
         loadPrcFileData("", "window-title MCU 3D 入门课堂\n"
                             "win-size 1280 760\n"
                             "framebuffer-multisample 1\nmultisamples 4\n"
@@ -207,6 +208,7 @@ class MCUApp(ShowBase):
         self._setup_picking()
         self._setup_panel()
         self._setup_menu()
+        self.keypad = KeyPad(self, visible=keypad)
 
         self.lesson = None
         self.lesson_index = None
@@ -602,6 +604,7 @@ class MCUApp(ShowBase):
         self.sim_return = None
         self.use_2d(False)
         self.orbit.set_view(16, 20, -35, (0, 0, 0))
+        self.keypad.refresh(None)
 
     # ------------------------------------------------------------ 课程切换
     def _close_lesson(self):
@@ -673,6 +676,7 @@ class MCUApp(ShowBase):
         if not cls.view2d:
             self.orbit.set_view(*cls.camera)
         self.lesson.setup()
+        self.keypad.refresh(lesson_keys(self.lesson))
 
     def next_lesson(self):
         if self.lesson_index is None:
@@ -721,5 +725,5 @@ class MCUApp(ShowBase):
         return task.cont
 
 
-def run(start_lesson=None):
-    MCUApp(start_lesson).run()
+def run(start_lesson=None, keypad=False):
+    MCUApp(start_lesson, keypad=keypad).run()
