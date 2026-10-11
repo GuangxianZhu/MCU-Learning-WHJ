@@ -10,6 +10,7 @@ from panda3d.core import (AmbientLight, BitMask32, ClockObject,
                           WindowProperties, loadPrcFileData)
 
 from . import glossary, parts, theme, ui
+from . import log as applog
 from .keypad import KeyPad, lesson_keys
 from .lessons import LESSONS, STAGES, UPCOMING, SimulatorLesson, stage_of
 from .lessons.base import PICK_MASK
@@ -232,6 +233,10 @@ class MCUApp(ShowBase):
             self.accept(btn + "-up", lambda b=btn: self.view.stop_drag(b))
         self.accept("mouse1", self._mouse1_down)
         self.accept("mouse1-up", self._mouse1_up)
+        if self.buttonThrowers:
+            # 每个按键（键盘和鼠标）都记进日志，出问题时能看出之前按了什么
+            self.buttonThrowers[0].node().setButtonDownEvent("mcu3d-button")
+            self.accept("mcu3d-button", self._log_button)
 
         self.taskMgr.add(self._update, "mcu3d-update")
 
@@ -294,6 +299,10 @@ class MCUApp(ShowBase):
         np = self.pick_queue.getEntry(0).getIntoNodePath().findNetTag("pick")
         return np.getTag("pick") if not np.isEmpty() else None
 
+    def _log_button(self, name):
+        if name not in ("wheel_up", "wheel_down"):
+            applog.log.debug("按键 %s", name)
+
     def _mouse1_down(self):
         self.view.start_drag("mouse1")
 
@@ -308,9 +317,11 @@ class MCUApp(ShowBase):
             last_tag, last_t = self.last_click
             if tag == last_tag and now - last_t < DOUBLE_CLICK:
                 self.last_click = (None, -1.0)
+                applog.log.info("双击 %s", tag)
                 self.lesson.on_double_pick(tag)
             else:
                 self.last_click = (tag, now)
+                applog.log.info("单击 %s", tag)
                 self.lesson.on_pick(tag)
 
     # ------------------------------------------------------------ 相机
@@ -585,14 +596,20 @@ class MCUApp(ShowBase):
             OnscreenText(parent=self.menu, text="（制作中）%s · %s" % (title, summary),
                          pos=(0, -0.82 - 0.05 * k), scale=0.032, font=self.font,
                          fg=theme.TEXT_DIM)
-        OnscreenText(parent=self.menu, pos=(0, -0.9), scale=0.035,
+        OnscreenText(parent=self.menu, pos=(0, -0.86), scale=0.035,
                      font=self.font, fg=theme.TEXT_DIM,
                      text="进入课程后：[ 上一课  ] 下一课  S 模拟器  Esc 回到菜单")
+        DirectButton(parent=self.menu, text_font=self.font,
+                     text="出问题了？点这里打开日志文件夹，把最新的 .log 文件发给 Claude",
+                     scale=0.038, pos=(0, 0, -0.945), frameColor=(0.13, 0.16, 0.24, 0.95),
+                     text_fg=theme.TEXT, relief=DGG.FLAT, pad=(0.5, 0.25),
+                     command=applog.open_folder)
 
         self.menu_scene = self.render.attachNewNode("menu-scene")
         parts.Chip(self.menu_scene, size=5, label="MCU")
 
     def show_menu(self):
+        applog.log.info("回到课程菜单")
         self._close_lesson()
         self.menu.show()
         self.menu_scene.show()
@@ -646,6 +663,7 @@ class MCUApp(ShowBase):
             self.show_menu()
 
     def _open(self, cls, index, title, *args):
+        applog.log.info("打开 %s", " ".join([title.replace("  ", " ")] + [str(a) for a in args]))
         self._close_lesson()
         self.menu.hide()
         self.menu_scene.hide()
@@ -706,6 +724,7 @@ class MCUApp(ShowBase):
 
     def step(self, dt):
         """推进一帧逻辑（测试里也会直接调用）。"""
+        applog.poll_panda_notify()
         self.view.update()
         if self.view is self.pan:
             self.pan.apply()      # 窗口宽高比变了也要跟着改
@@ -726,4 +745,18 @@ class MCUApp(ShowBase):
 
 
 def run(start_lesson=None, keypad=False):
-    MCUApp(start_lesson, keypad=keypad).run()
+    applog.setup()
+    applog.capture_panda_notify()
+    print(applog.where_text())
+    try:
+        app = MCUApp(start_lesson, keypad=keypad)
+        applog.log_graphics(app)
+        app.run()
+    except SystemExit:
+        applog.shutdown("关闭了窗口")
+        raise
+    except KeyboardInterrupt:
+        applog.shutdown("在黑窗口里按了 Ctrl+C")
+        raise
+    # 其他异常交给 sys.excepthook（log.py 里装好的），它会写日志并告诉用户文件在哪
+    applog.shutdown()

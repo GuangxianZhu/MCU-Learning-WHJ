@@ -13,6 +13,7 @@ from direct.gui.DirectGui import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode
 
+from .. import log as applog
 from .. import theme
 from ..schem.nav import Schematic
 from ..schem.state import State
@@ -198,6 +199,7 @@ class SimView:
         self.reset()
 
     def reset(self):
+        applog.log.info("模拟器：载入/复位例程 %s", self.program.key)
         self.machine.reset()
         self.queue = []
         self.cur = None
@@ -311,6 +313,11 @@ class SimView:
         self.shown_flags = dict(cpu.flags)
         self.instr_addr = None if cpu.need_reset else cpu.r[15]
         beats = self.machine.step()
+        if self.instr_addr is None:
+            applog.log.debug("模拟器：执行 复位（从向量表读 SP 和 PC）")
+        else:
+            asm = next((b.asm for b in beats if b.kind == "decode"), "")
+            applog.log.debug("模拟器：执行 0x%08X %s", self.instr_addr, asm)
         self.mem_hidden = {}
         for b in beats:
             if b.kind == "mem_write" and (b.addr & ~3) not in self.mem_hidden:
@@ -392,6 +399,7 @@ class SimView:
         elif k == "calc" and self.queue and self.queue[0].kind in ("mem_read", "mem_write"):
             h["y"] = self.queue[0].addr      # 这一拍 ALU 算的就是下一拍要访问的地址
         elif k == "fault":
+            applog.log.warning("模拟器出错：%s", b.text)
             self.fault = b.text
             self.running = False
         if self.on_beat:
