@@ -1,19 +1,22 @@
 """芯片内部模拟器的画面。
 
-中间是 3D 芯片：CPU（寄存器组、标志位、控制单元、ALU）、三组总线线路、Flash、SRAM、外设区。
-右边是 2D 数据面板：C 代码 / 汇编 / 机器码、寄存器表、内存表。
+中间是 Logisim 风格的电路图（见 schem/）：可以从整颗芯片一层层双击进去，
+一直看到 ALU 里的全加器、寄存器里的与非门。导线按电平上色。
+右边是数据面板：C 代码 / 汇编 / 机器码、寄存器表、内存表。
 下方是“这一拍”说明、总线上的信号，以及 ALU 一位一位的计算过程。
 
 CPU 每执行一条指令会产生若干“拍”（见 machine.Beat），这里按拍播放：
-on_start 时放动画、亮模块，on_end 时把新值写进面板。
+每一拍的前半拍时钟 CLK=0，后半拍 CLK=1，电路图跟着变色。
 """
 
 from direct.gui.DirectGui import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode
 
-from .. import parts, shapes, theme
-from ..ui import colored, set_text, text3d, wrap
+from .. import theme
+from ..schem.nav import Schematic
+from ..schem.state import State
+from ..ui import colored, wrap
 from .asm import REG_NAMES
 from .machine import (FLASH_BASE, SRAM_BASE, STACK_TOP, Machine, REGION_NAMES,
                       hex32, region_of, show_value)
@@ -27,206 +30,10 @@ KIND_NAMES = {"fetch": "取指", "decode": "译码", "read_reg": "读寄存器",
               "mem_read": "读存储器", "mem_write": "写存储器", "write_reg": "写回寄存器",
               "branch": "改 PC", "calc": "算地址", "idle": "空转", "fault": "出错"}
 
-ADDR_COLOR = (0.75, 0.5, 1.0, 1)
-DATA_COLOR = (0.3, 0.85, 1.0, 1)
-CTRL_IDLE = (0.45, 0.47, 0.52, 1)
-READ_COLOR = (0.35, 0.9, 0.45, 1)
-WRITE_COLOR = (1.0, 0.5, 0.2, 1)
-REG_COLOR = (0.55, 0.22, 0.24, 1)
-
 # 右侧数据面板（aspect2d 单位，相对右上角）
 RW = 1.24
 RX = -RW - 0.02
 SCALE = 0.027
-
-# 3D 布局
-TRUNK_X = {"addr": -0.45, "data": 0.0, "ctrl": 0.45}
-TRUNK_Y0, TRUNK_Y1 = -1.3, 5.2
-BRANCH_Y = 2.4
-TARGET_EDGE = {"flash": (-1.0, BRANCH_Y), "sram": (1.0, BRANCH_Y), "periph": (None, 5.3)}
-
-# 点击 3D 模块时的介绍
-MODULES = {
-    "regs": ("寄存器组",
-             "CPU 内部的 16 个 32 位寄存器，是 CPU 手边的“草稿格子”，读写只要一拍。\n\n"
-             "· R0~R12：通用寄存器，放正在计算的数。函数的参数和返回值也用 R0~R3\n"
-             "· SP（R13）：栈指针，指向 SRAM 里栈的最上面一格\n"
-             "· LR（R14）：链接寄存器，调用函数时记住“回到哪里”\n"
-             "· PC（R15）：程序计数器，记着下一条指令在 Flash 的哪个地址\n\n"
-             "它们没有地址，只有 CPU 自己能直接用。CPU 做任何计算，都要先把数放进寄存器。"),
-    "flags": ("标志位 NZCV",
-              "程序状态寄存器（xPSR）里的 4 个位，记录上一次运算结果的特点：\n\n"
-              "· N（Negative）：结果是负数（最高位是 1）\n"
-              "· Z（Zero）：结果是 0\n"
-              "· C（Carry）：加法有进位，或减法没有借位\n"
-              "· V（oVerflow）：有符号数溢出，比如正数 + 正数变成了负数\n\n"
-              "条件跳转（BEQ、BLE……）就是看这几个位决定跳不跳，C 语言的 if、while 全靠它们。"),
-    "decoder": ("控制单元（指令译码器）",
-                "CPU 的“指挥”。取回来的机器码先送到这里，它看懂这串 0 和 1 是哪条指令、"
-                "要用哪几个寄存器，然后发出控制信号：让寄存器组送出数据、让 ALU 做加法还是与运算、"
-                "让总线去读还是写。"),
-    "alu": ("ALU 算术逻辑单元",
-            "CPU 里真正做计算的电路：加、减、与、或、异或、移位、比较……\n\n"
-            "它一次处理 32 位，每一位都是一个小加法器，低位的进位传给高位。"
-            "算完顺便把结果的特点记进标志位 NZCV。"),
-    "flash": ("Flash 程序存储器（0x0800 0000 起）",
-              "存放程序的地方，断电不丢。最前面是向量表：第 0 个字是栈顶地址，第 1 个字是复位后"
-              "第一条指令的地址；后面是一条条机器码，再后面是“文字池”（程序用到的常数，比如变量的地址）。\n\n"
-              "CPU 每执行一条指令都要先从这里“取指”。运行时它是只读的。"),
-    "sram": ("SRAM 数据存储器（0x2000 0000 起，20KB）",
-             "存放运行时数据，读写都快，断电就丢。\n\n"
-             "· 低地址那头：全局变量，一个 int 占 4 字节，一个挨一个\n"
-             "· 高地址那头（0x2000 5000 往下）：栈，函数调用时保存返回地址和寄存器\n\n"
-             "CPU 不能直接在这里做计算，要先读进寄存器，算完再写回来。"),
-    "periph": ("外设区（0x4000 0000 起）",
-               "GPIO、定时器、UART、ADC 等外设的寄存器都在这段地址里。"
-               "CPU 读写它们和读写 SRAM 一模一样，只是写进去的数会变成引脚电平、"
-               "定时时间、串口数据……第 8 课起会把它们接进模拟器。"),
-    "bus_addr": ("地址线",
-                 "32 根线，CPU 在上面放出要访问的地址（比如 0x2000 0000），"
-                 "总线根据地址找到对应的模块：0x08… 是 Flash，0x20… 是 SRAM，0x40… 是外设。"),
-    "bus_data": ("数据线",
-                 "32 根线，传送真正的数据。读的时候由存储器把数放上来送给 CPU；"
-                 "写的时候由 CPU 把数放上去送给存储器。"),
-    "bus_ctrl": ("读 / 写控制线",
-                 "告诉被访问的模块这次是“读”还是“写”。画面上绿色表示读，橙色表示写。"),
-}
-
-
-class Chip3D:
-    """3D 芯片模型。所有节点挂在 lesson.root 下，课程销毁时一起消失。"""
-
-    def __init__(self, lesson):
-        self.L = L = lesson
-        self.root = L.root.attachNewNode("sim-chip")
-        L.box((9.6, 15.4, 0.2), (0, -0.4, -0.12), theme.DIE, parent=self.root)
-
-        # ---- CPU ----
-        L.box((8.6, 6.0, 0.12), (0, -4.6, 0.02), (0.28, 0.12, 0.13, 1), parent=self.root)
-        L.label("CPU 内核", (-4.1, -1.75, 0.3), 0.55, theme.CPU, parent=self.root,
-                align="left")
-        self.reg_cubes = []
-        self.reg_base = []
-        for i in range(16):
-            col, row = i % 4, i // 4
-            pos = (-3.45 + col * 0.82, -2.6 - row * 0.82, 0.32)
-            cube = L.box((0.64, 0.64, 0.4), pos, REG_COLOR, parent=self.root, pick="regs")
-            text3d(REG_NAMES[i], cube, (0, 0, 0.5), 0.36, theme.TEXT)
-            self.reg_cubes.append(cube)
-            self.reg_base.append(pos)
-        L.label("寄存器组", (-2.22, -6.05, 0.3), 0.42, theme.TEXT_DIM, parent=self.root)
-        self.flag_cubes = {}
-        for k, name in enumerate("NZCV"):
-            cube = L.box((0.5, 0.5, 0.3), (-3.45 + k * 0.82, -6.75, 0.26), (0.2, 0.2, 0.24, 1),
-                         parent=self.root, pick="flags")
-            text3d(name, cube, (0, 0, 0.4), 0.38, theme.TEXT)
-            self.flag_cubes[name] = cube
-        L.label("标志位", (-0.6, -6.85, 0.3), 0.42, theme.TEXT_DIM, parent=self.root,
-                align="left")
-
-        self.decoder = L.box((3.4, 1.5, 0.5), (2.2, -2.9, 0.35), (0.42, 0.3, 0.5, 1),
-                             parent=self.root, pick="decoder")
-        L.label("控制单元（译码器）", (2.2, -1.95, 0.7), 0.4, theme.TEXT_DIM, parent=self.root)
-        self.decoder_text = L.label("", (2.2, -2.9, 0.95), 0.4, theme.ACCENT,
-                                    parent=self.root)
-        self.alu = L.box((3.4, 2.0, 0.6), (2.2, -5.4, 0.4), (0.55, 0.38, 0.18, 1),
-                         parent=self.root, pick="alu")
-        L.label("ALU 运算器", (2.2, -4.2, 0.8), 0.42, theme.TEXT_DIM, parent=self.root)
-        self.alu_text = L.label("", (2.2, -5.4, 1.1), 0.45, theme.ACCENT, parent=self.root)
-        # CPU 内部的数据通路：寄存器组 <-> ALU，控制单元 -> ALU
-        L.wire([(-0.7, -4.0, 0.25), (0.5, -5.0, 0.25)], (0.6, 0.6, 0.65, 1), 2,
-               parent=self.root)
-        L.wire([(0.5, -5.8, 0.25), (-0.7, -4.6, 0.25)], (0.6, 0.6, 0.65, 1), 2,
-               parent=self.root)
-        L.wire([(2.2, -3.65, 0.25), (2.2, -4.4, 0.25)], (0.6, 0.6, 0.65, 1), 2,
-               parent=self.root)
-
-        # ---- 总线 ----
-        self.trunks = {}
-        colors = {"addr": ADDR_COLOR, "data": DATA_COLOR, "ctrl": CTRL_IDLE}
-        for key, x in TRUNK_X.items():
-            t = shapes.flat_trace((x, TRUNK_Y0, 0.06), (x, TRUNK_Y1, 0.06), 0.16, 0.06,
-                                  colors[key])
-            t.reparentTo(self.root)
-            t.setLightOff(1)
-            L.make_pickable(t, "bus_" + key)
-            self.trunks[key] = t
-        for sx in (-1, 1):
-            for key, x in TRUNK_X.items():
-                y = BRANCH_Y + {"addr": 0.3, "data": 0.0, "ctrl": -0.3}[key]
-                b = shapes.flat_trace((x, y, 0.05), (sx * 1.0, y, 0.05), 0.1, 0.05,
-                                      theme.scale(colors[key], 0.7))
-                b.reparentTo(self.root)
-                b.setLightOff(1)
-        L.label("地址线", (-0.6, -0.6, 0.3), 0.36, (0.8, 0.6, 1, 1), parent=self.root,
-                align="right")
-        L.label("读/写线", (0.6, -0.6, 0.3), 0.36, (0.75, 0.77, 0.8, 1), parent=self.root,
-                align="left")
-        L.label("数据线", (0.0, 0.6, 0.45), 0.34, (0.5, 0.9, 1, 1), parent=self.root)
-        L.label("系统总线", (0.0, 4.6, 0.5), 0.4, theme.ACCENT, parent=self.root)
-
-        # ---- 存储器与外设 ----
-        self.blocks = {
-            "flash": L.box((2.8, 2.8, 0.6), (-2.6, BRANCH_Y, 0.35), theme.FLASH,
-                           parent=self.root, pick="flash"),
-            "sram": L.box((2.8, 2.8, 0.6), (2.6, BRANCH_Y, 0.35), theme.SRAM,
-                          parent=self.root, pick="sram"),
-            "periph": L.box((7.6, 1.6, 0.5), (0, 6.1, 0.3), (0.45, 0.4, 0.3, 1),
-                            parent=self.root, pick="periph"),
-        }
-        L.label("Flash\n0x0800 0000", (-2.6, BRANCH_Y, 1.0), 0.42, parent=self.root)
-        L.label("SRAM\n0x2000 0000", (2.6, BRANCH_Y, 1.0), 0.42, parent=self.root)
-        L.label("外设区 0x4000 0000\n（第 8 课起接入）", (0, 6.1, 0.9),
-                0.4, theme.TEXT_DIM, parent=self.root)
-
-        self.glow = {}       # 节点 -> 剩余发光时间
-        self.popups = []
-
-    # ---- 动画辅助 ----
-    def flash_node(self, np, t=0.8, color=None):
-        self.glow[np] = [t, color]
-
-    def set_ctrl(self, mode):
-        self.trunks["ctrl"].setColor({"read": READ_COLOR, "write": WRITE_COLOR}.get(
-            mode, CTRL_IDLE))
-
-    def set_flags(self, flags):
-        for k, cube in self.flag_cubes.items():
-            cube.setColor(theme.HIGH if flags[k] else (0.2, 0.2, 0.24, 1))
-
-    def popup(self, text, pos, color=theme.ACCENT, life=1.2):
-        np = text3d(text, self.root, pos, 0.45, color)
-        self.popups.append([np, life])
-
-    def path(self, line, target):
-        """从 CPU 出发，沿某根总线走到目标模块的路径。"""
-        x = TRUNK_X[line]
-        ex, ey = TARGET_EDGE[target]
-        if target == "periph":
-            return [(x, TRUNK_Y0, 0.4), (x, ey, 0.4)]
-        dy = {"addr": 0.3, "data": 0.0, "ctrl": -0.3}[line]
-        return [(x, TRUNK_Y0, 0.4), (x, ey + dy, 0.4), (ex, ey + dy, 0.4)]
-
-    def update(self, dt, time):
-        for np, item in list(self.glow.items()):
-            item[0] -= dt
-            if item[0] <= 0 or np.isEmpty():
-                if not np.isEmpty():
-                    np.clearColorScale()
-                del self.glow[np]
-                continue
-            k = 1.3 + 0.6 * parts.pulse(time, 10)
-            c = item[1]
-            if c:
-                np.setColorScale(c[0] * k, c[1] * k, c[2] * k, 1)
-            else:
-                np.setColorScale(k, k, k, 1)
-        for item in list(self.popups):
-            item[1] -= dt
-            item[0].setZ(item[0].getZ() + dt * 0.4)
-            if item[1] <= 0:
-                item[0].removeNode()
-                self.popups.remove(item)
 
 
 def _frame(parent, x0, x1, z0, z1, alpha=0.82):
@@ -361,16 +168,17 @@ class Panels:
 
 
 class SimView:
-    """模拟器：一台 Machine + 3D 芯片 + 2D 面板 + 播放控制。
+    """模拟器：一台 Machine + 分层电路图 + 2D 面板 + 播放控制。
 
-    lesson 需要提供 root、app、box/label/wire/make_pickable（Lesson 基类都有）。
+    lesson 需要提供 root、app、make_pickable（Lesson 基类都有）。
+    sheet 是一开始显示哪一层电路图（chip / cpu / alu / regfile）。
     """
 
-    def __init__(self, lesson, program="inc", on_beat=None):
+    def __init__(self, lesson, program="inc", on_beat=None, sheet="chip"):
         self.lesson = lesson
         self.app = lesson.app
-        self.chip = Chip3D(lesson)
         self.panels = Panels(self.app)
+        self.schem = Schematic(lesson, sheet, (self.panels.strip_x0, self.panels.strip_w))
         self.on_beat = on_beat
         self.speed_i = 2
         self.running = False
@@ -379,7 +187,7 @@ class SimView:
         self.load(program)
 
     def destroy(self):
-        self.lesson.clear_movers()
+        self.schem.destroy()
         self.panels.destroy()
 
     # ------------------------------------------------------------ 程序
@@ -390,7 +198,6 @@ class SimView:
         self.reset()
 
     def reset(self):
-        self.lesson.clear_movers()
         self.machine.reset()
         self.queue = []
         self.cur = None
@@ -404,15 +211,27 @@ class SimView:
         self.last_alu = None
         self.last_bus = None
         self.fault = None
+        # 电路图要用的：最近显示的一拍、时钟、IR 里的机器码、CPU 内部各条线最后的值
+        self.show_beat = None
+        self.clk = 0
+        self.last_ir = None
+        self.last_asm = ""
+        self.hold = {}
         self.last_text = ("按空格执行一条指令，按 T 只走一拍。第一步是“复位”："
                           "CPU 先从向量表读出 SP 和 PC。")
         self.running = False
         self.single = False
-        self.chip.set_flags(self.shown_flags)
-        self.chip.set_ctrl(None)
-        set_text(self.chip.decoder_text, "")
-        set_text(self.chip.alu_text, "")
         self.refresh_all()
+        self.push_state()
+
+    def state(self):
+        return State(beat=self.show_beat, active=self.cur is not None and
+                     self.cur is self.show_beat, clk=self.clk, regs=list(self.shown_r),
+                     flags=dict(self.shown_flags), need_reset=self.machine.cpu.need_reset,
+                     alu=self.last_alu, ir=self.last_ir, asm=self.last_asm, hold=dict(self.hold))
+
+    def push_state(self):
+        self.schem.apply(self.state())
 
     def _build_code_rows(self):
         p = self.program
@@ -438,6 +257,8 @@ class SimView:
         lesson.accept("r", self.toggle_run)
         lesson.accept("z", self.reset)
         lesson.accept("m", self.next_mem_mode)
+        lesson.accept("backspace", self.schem.up)
+        lesson.accept("enter", self.schem.enter)
         lesson.accept_keys(["arrow_up"], self.change_speed, [1])
         lesson.accept_keys(["arrow_down"], self.change_speed, [-1])
         for k, key in enumerate(programs or []):
@@ -509,12 +330,11 @@ class SimView:
         return cur & ~(0xFF << shift) | ((b.old or 0) << shift)
 
     def _finish_instruction(self):
-        self.lesson.clear_movers()
         if self.cur is not None:
             self._end_beat()
         while self.queue:
             b = self.queue.pop(0)
-            self._begin_beat(b, animate=False)
+            self._begin_beat(b)
             self._end_beat()
         self._commit_instruction()
 
@@ -524,79 +344,67 @@ class SimView:
         self.shown_flags = dict(cpu.flags)
         self.mem_hidden = {}
         self.instr_addr = None
-        self.chip.set_ctrl(None)
-        self.chip.set_flags(self.shown_flags)
         self.refresh_all()
+        self.push_state()
 
-    def _begin_beat(self, b, animate=True):
+    def _begin_beat(self, b):
         self.cur = b
         self.cur_t = 0.0
         self.cur_len = BEAT_TIME.get(b.kind, 0.8)
         self.last_text = b.text
-        ch = self.chip
-        speed = SPEEDS[self.speed_i]
-        dur = self.cur_len / speed
-        show = animate and speed <= 4
+        self.show_beat = b
+        self.clk = 0
+        dur = self.cur_len / SPEEDS[self.speed_i]
         k = b.kind
+        h = self.hold
         if k == "fetch":
             self.mem_focus = "flash"
             self.last_bus = (b.addr, b.value, "read", "取指")
-            ch.set_ctrl("read")
-            ch.flash_node(ch.blocks["flash"], dur)
-            ch.flash_node(ch.reg_cubes[15], dur * 0.5)
-            if show:
-                self._packets("flash", b.addr, b.value, dur, read=True,
-                              digits=8 if b.size == 4 else 4)
+            self.last_ir = (b.value, b.size)
+            self.last_asm = ""
             self.refresh_code()
             self.refresh_mem(highlight=(b.addr & ~3, (0.2, 0.45, 0.9)))
         elif k == "decode":
-            ch.flash_node(ch.decoder, dur)
-            set_text(ch.decoder_text, b.asm)
+            self.last_asm = b.asm
         elif k == "read_reg":
+            h["sel_a"], h["rf_a"] = b.regs[0], self.shown_r[b.regs[0]]
+            if len(b.regs) > 1:
+                h["sel_b"], h["rf_b"] = b.regs[1], self.shown_r[b.regs[1]]
             for r in b.regs:
-                ch.flash_node(ch.reg_cubes[r], dur, (0.5, 0.75, 1.0))
                 self.panels.mark(self.panels.reg_bars, r, (0.2, 0.45, 0.9), dur + 0.4)
         elif k == "alu":
             self.last_alu = b
-            ch.flash_node(ch.alu, dur)
-            set_text(ch.alu_text, _alu_summary(b))
+            h["y"] = b.result
             self.refresh_alu()
         elif k in ("mem_read", "mem_write"):
-            region = region_of(b.addr) or "periph"
             read = k == "mem_read"
+            h["y"] = b.addr
             self._focus_mem(b.addr)
             self.last_bus = (b.addr, b.value, "read" if read else "write",
                              "读数据" if read else "写数据")
-            ch.set_ctrl("read" if read else "write")
-            ch.flash_node(ch.blocks[region], dur)
-            if show:
-                self._packets(region, b.addr, b.value, dur, read=read,
-                              digits=2 if b.size == 1 else 8)
             self.refresh_mem(highlight=(b.addr & ~3, (0.2, 0.45, 0.9) if read else None))
         elif k == "write_reg":
             self.shown_r[b.reg] = b.new
-            ch.flash_node(ch.reg_cubes[b.reg], dur, (1.0, 0.6, 0.25))
             self.panels.mark(self.panels.reg_bars, b.reg, (0.85, 0.45, 0.1), dur + 0.6)
-            if show:
-                x, y, z = ch.reg_base[b.reg]
-                ch.popup(show_value(b.new), (x, y, z + 0.9), life=dur + 0.4)
             self.refresh_regs()
         elif k == "branch":
-            if b.taken:
-                ch.flash_node(ch.reg_cubes[15], dur, (1.0, 0.6, 0.25))
-            ch.flash_node(ch.flag_cubes["N"], dur * 0.5)
+            h["y"] = b.target
+        elif k == "calc" and self.queue and self.queue[0].kind in ("mem_read", "mem_write"):
+            h["y"] = self.queue[0].addr      # 这一拍 ALU 算的就是下一拍要访问的地址
         elif k == "fault":
             self.fault = b.text
             self.running = False
         if self.on_beat:
             self.on_beat(b)
         self.refresh_status()
+        self.push_state()
 
     def _end_beat(self):
         b = self.cur
         self.cur = None
         if b is None:
             return
+        self.clk = 1
         k = b.kind
         if k == "fetch":
             self.shown_r[15] = b.next_pc
@@ -604,7 +412,6 @@ class SimView:
         elif k == "alu":
             if b.set_flags:
                 self.shown_flags = dict(b.flags_new)
-                self.chip.set_flags(self.shown_flags)
                 self.refresh_regs()
         elif k == "mem_write":
             self.mem_hidden.pop(b.addr & ~3, None)
@@ -614,26 +421,7 @@ class SimView:
                 self.shown_r[15] = b.target
                 self.panels.mark(self.panels.reg_bars, 15, (0.85, 0.45, 0.1), 1.0)
                 self.refresh_regs()
-
-    def _packets(self, region, addr, value, dur, read, digits):
-        ch = self.chip
-        L = self.lesson
-        half = dur * 0.45
-        apath = ch.path("addr", region)
-        dpath = ch.path("data", region)
-        L.movers.append(parts.Packet(L.root, apath, ADDR_COLOR, _plen(apath) / half, 0.4,
-                                     label=_short_addr(addr), label_scale=0.5))
-        vtext = ("%0" + str(digits) + "X") % value
-        if read:
-            back = list(reversed(dpath))
-
-            def later(back=back, vtext=vtext):
-                L.movers.append(parts.Packet(L.root, back, DATA_COLOR, _plen(back) / half,
-                                             0.4, label=vtext, label_scale=0.5))
-            L.movers.append(_Delay(half, later))
-        else:
-            L.movers.append(parts.Packet(L.root, dpath, DATA_COLOR, _plen(dpath) / half,
-                                         0.4, label=vtext, label_scale=0.5))
+        self.push_state()
 
     def _focus_mem(self, addr):
         reg = region_of(addr)
@@ -644,10 +432,12 @@ class SimView:
                 STACK_TOP - 0x400 else "vars"
 
     def update(self, dt):
-        self.chip.update(dt, self.lesson.time)
         self.panels.update(dt)
         if self.cur is not None:
             self.cur_t += dt * SPEEDS[self.speed_i]
+            if self.clk == 0 and self.cur_t >= self.cur_len / 2:
+                self.clk = 1          # 后半拍：时钟上升沿，寄存器存下新值
+                self.push_state()
             if self.cur_t >= self.cur_len:
                 self._end_beat()
                 if self.queue and not self.single:
@@ -812,37 +602,8 @@ class SimView:
         p.alu_flags.setPos(p.strip_x0 + 0.02, alu_z - 4 * 0.026 * 1.36)
 
 
-class _Delay:
-    """过一会儿再执行某件事（借用 lesson.movers 的更新机制）。"""
-
-    def __init__(self, t, func):
-        self.t = t
-        self.func = func
-        self.done = False
-
-    def update(self, dt):
-        self.t -= dt
-        if self.t <= 0 and not self.done:
-            self.done = True
-            self.func()
-
-    def destroy(self):
-        self.done = True
-
-
-def _plen(path):
-    total = 0.0
-    for a, b in zip(path, path[1:]):
-        total += sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
-    return max(total, 0.01)
-
-
 def _addr(a):
     return "%04X %04X" % (a >> 16, a & 0xFFFF)
-
-
-def _short_addr(a):
-    return "%08X" % a
 
 
 def _bits(v, one="hi"):

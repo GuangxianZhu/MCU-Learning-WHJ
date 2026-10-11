@@ -6,8 +6,8 @@ from direct.showbase.ShowBase import ShowBase
 from panda3d.core import (AmbientLight, BitMask32, ClockObject,
                           CollisionHandlerQueue,
                           CollisionNode, CollisionRay, CollisionTraverser,
-                          DirectionalLight, TextNode, WindowProperties,
-                          loadPrcFileData)
+                          DirectionalLight, OrthographicLens, TextNode,
+                          WindowProperties, loadPrcFileData)
 
 from . import glossary, parts, theme, ui
 from .lessons import LESSONS, STAGES, UPCOMING, SimulatorLesson, stage_of
@@ -21,6 +21,11 @@ GLOBAL_HINTS = ("鼠标：拖动旋转视角，滚轮缩放，左键点选物体
                 "讲解太长时：鼠标放在面板上滚动滚轮，或按 PageUp/PageDown\n"
                 "Home 重置视角   Tab 隐藏/显示面板   S 芯片内部模拟器\n"
                 "[ 上一课   ] 下一课   Esc 课程菜单")
+GLOBAL_HINTS_2D = ("鼠标：拖动平移电路图，滚轮缩放，左键点选\n"
+                   "讲解太长时：鼠标放在面板上滚动滚轮，或按 PageUp/PageDown\n"
+                   "Home 整张图放回中间   Tab 隐藏/显示面板   S 芯片内部模拟器\n"
+                   "[ 上一课   ] 下一课   Esc 课程菜单")
+DOUBLE_CLICK = 0.45   # 两次单击间隔小于这么多秒算双击
 
 # 右上角“芯片地图”：(标识, 名称, 颜色, 列, 行)，和第 2 课的布局一致
 CHIP_MAP = [
@@ -47,9 +52,6 @@ class OrbitCamera:
         self.button = None
         self.last = None
         self.dragged = False
-        for btn in ("mouse2", "mouse3"):
-            base.accept(btn, self.start_drag, [btn])
-            base.accept(btn + "-up", self.stop_drag, [btn])
         self.apply()
 
     def set_view(self, dist, h, p, target):
@@ -94,9 +96,80 @@ class OrbitCamera:
         self.last = (x, y)
 
     def apply(self):
+        if getattr(self.base, "view", self) is not self:
+            return
         self.pivot.setHpr(self.h, self.p, 0)
         self.base.camera.setPos(0, -self.dist, 0)
         self.base.camera.setHpr(0, 0, 0)
+
+
+class PanCamera:
+    """看平面电路图用的相机：正交投影（没有近大远小），拖动平移，滚轮缩放。
+
+    电路图画在 X-Z 平面上，相机放在 -Y 方向朝 +Y 看。
+    """
+
+    def __init__(self, base):
+        self.base = base
+        self.lens = OrthographicLens()
+        self.lens.setNearFar(1, 400)
+        self.cx, self.cz, self.height = 0.0, 0.0, 30.0
+        self.default = (0.0, 0.0, 30.0)
+        self.button = None
+        self.last = None
+        self.dragged = False
+
+    def activate(self):
+        cam = self.base.camera
+        cam.reparentTo(self.base.render)
+        cam.setHpr(0, 0, 0)
+        self.base.cam.node().setLens(self.lens)
+        self.apply()
+
+    def set_view(self, cx, cz, height):
+        self.default = (cx, cz, height)
+        self.cx, self.cz, self.height = cx, cz, height
+        self.apply()
+
+    def reset(self):
+        self.set_view(*self.default)
+
+    def zoom(self, k):
+        self.height = max(3.0, min(400.0, self.height * k))
+        self.apply()
+
+    def start_drag(self, btn):
+        mw = self.base.mouseWatcherNode
+        if mw is not None and mw.hasMouse():
+            self.button = btn
+            self.last = (mw.getMouseX(), mw.getMouseY())
+            self.dragged = False
+
+    def stop_drag(self, btn):
+        if self.button != btn:
+            return False
+        self.button = None
+        return self.dragged
+
+    def update(self):
+        mw = self.base.mouseWatcherNode
+        if not self.button or mw is None or not mw.hasMouse():
+            return
+        x, y = mw.getMouseX(), mw.getMouseY()
+        dx, dy = x - self.last[0], y - self.last[1]
+        if abs(dx) + abs(dy) > 0.004:
+            self.dragged = True
+        if self.dragged:
+            aspect = self.base.getAspectRatio()
+            self.cx -= dx * aspect * self.height / 2
+            self.cz -= dy * self.height / 2
+            self.apply()
+        self.last = (x, y)
+
+    def apply(self):
+        aspect = self.base.getAspectRatio()
+        self.lens.setFilmSize(self.height * aspect, self.height)
+        self.base.camera.setPos(self.cx, -100, self.cz)
 
 
 class MCUApp(ShowBase):
@@ -126,7 +199,11 @@ class MCUApp(ShowBase):
         self.font = ui.load_font(self.loader)
         ui.register_text_colors()
         self._setup_lights()
+        self.persp_lens = self.camLens
         self.orbit = OrbitCamera(self)
+        self.pan = PanCamera(self)
+        self.view = self.orbit       # 当前在用的相机控制（3D 课用 orbit，2D 电路图用 pan）
+        self.last_click = (None, -1.0)
         self._setup_picking()
         self._setup_panel()
         self._setup_menu()
@@ -146,8 +223,11 @@ class MCUApp(ShowBase):
         self.accept("page_down", self.scroll_body, [8])
         self.accept("wheel_up", self._wheel, [-1])
         self.accept("wheel_down", self._wheel, [1])
-        self.accept("home", self.orbit.reset)
+        self.accept("home", self._home)
         self.accept("tab", self.toggle_panel)
+        for btn in ("mouse2", "mouse3"):
+            self.accept(btn, lambda b=btn: self.view.start_drag(b))
+            self.accept(btn + "-up", lambda b=btn: self.view.stop_drag(b))
         self.accept("mouse1", self._mouse1_down)
         self.accept("mouse1-up", self._mouse1_up)
 
@@ -204,7 +284,7 @@ class MCUApp(ShowBase):
         mw = self.mouseWatcherNode
         if self.lesson is None or mw is None or not mw.hasMouse():
             return None
-        self.pick_ray.setFromLens(self.camNode, mw.getMouseX(), mw.getMouseY())
+        self.pick_ray.setFromLens(self.cam.node(), mw.getMouseX(), mw.getMouseY())
         self.picker.traverse(self.lesson.root)
         if self.pick_queue.getNumEntries() == 0:
             return None
@@ -213,16 +293,65 @@ class MCUApp(ShowBase):
         return np.getTag("pick") if not np.isEmpty() else None
 
     def _mouse1_down(self):
-        self.orbit.start_drag("mouse1")
+        self.view.start_drag("mouse1")
 
     def _mouse1_up(self):
-        if self.orbit.stop_drag("mouse1"):
-            return  # 拖动旋转，不算点击
+        if self.view.stop_drag("mouse1"):
+            return  # 拖动旋转/平移，不算点击
         if self.mouse_over_panel():
             return
         tag = self.pick_under_mouse()
         if tag and self.lesson:
-            self.lesson.on_pick(tag)
+            now = ClockObject.getGlobalClock().getFrameTime()
+            last_tag, last_t = self.last_click
+            if tag == last_tag and now - last_t < DOUBLE_CLICK:
+                self.last_click = (None, -1.0)
+                self.lesson.on_double_pick(tag)
+            else:
+                self.last_click = (tag, now)
+                self.lesson.on_pick(tag)
+
+    # ------------------------------------------------------------ 相机
+    def use_2d(self, on):
+        """切换 3D 旋转相机 / 2D 电路图相机。"""
+        if on and self.view is not self.pan:
+            self.view = self.pan
+            self.pan.activate()
+        elif not on and self.view is not self.orbit:
+            self.view = self.orbit
+            self.camera.reparentTo(self.orbit.pivot)
+            self.cam.node().setLens(self.persp_lens)
+            self.orbit.apply()
+
+    def visible_margins(self):
+        """画面四周被面板挡住的宽度（aspect2d 单位）：左、右、下、上。"""
+        left = self.panel_w if (self.lesson is not None and self.panel_visible) else 0.0
+        if self.lesson is not None and getattr(self.lesson, "full_canvas", False):
+            return 0.0, 0.0, 0.03, 0.17
+        if self.lesson is not None and self.lesson.sim_layout:
+            from .sim.view import RW
+            return left, RW + 0.02, 0.62, 0.17
+        top = 0.45 if (self.lesson is not None and self.lesson.show_chip_map) else 0.17
+        return left, 0.0, 0.03, top
+
+    def fit_view(self, x0, z0, x1, z1, set_default=True):
+        """2D 相机：让电路图 (x0, z0)-(x1, z1) 正好放进没被面板挡住的那块画面。"""
+        left, right, bottom, top = self.visible_margins()
+        aspect = self.getAspectRatio()
+        wv = max(0.3, 2 * aspect - left - right)
+        hv = max(0.3, 2 - bottom - top)
+        height = max(2 * (z1 - z0) / hv, 2 * (x1 - x0) / wv) * 1.06
+        if set_default:
+            self.pan.set_view((x0 + x1) / 2, (z0 + z1) / 2, height)
+        else:
+            self.pan.cx, self.pan.cz, self.pan.height = (x0 + x1) / 2, (z0 + z1) / 2, height
+            self.pan.apply()
+
+    def _home(self):
+        if self.lesson is not None and hasattr(self.lesson, "home"):
+            self.lesson.home()
+        else:
+            self.view.reset()
 
     # ------------------------------------------------------------ 讲解面板
     def _setup_panel(self):
@@ -398,7 +527,7 @@ class MCUApp(ShowBase):
         if self.mouse_over_panel():
             self.scroll_body(3 * direction)
         else:
-            self.orbit.zoom(1.1 if direction > 0 else 0.9)
+            self.view.zoom(1.1 if direction > 0 else 0.9)
 
     def set_hints(self, text):
         text = ui.wrap(text, (self.panel_w - 0.14) / 0.034)
@@ -413,6 +542,8 @@ class MCUApp(ShowBase):
         self.panel_visible = not self.panel_visible
         for w in (self.panel, self.hint_text):
             w.show() if self.panel_visible else w.hide()
+        if self.lesson.view2d and hasattr(self.lesson, "home"):
+            self.lesson.home()     # 电路图课：空出来的地方让电路图变大
 
     # ------------------------------------------------------------ 课程菜单
     def _setup_menu(self):
@@ -469,6 +600,7 @@ class MCUApp(ShowBase):
         self.chip_map.hide()
         self.roadmap.hide()
         self.sim_return = None
+        self.use_2d(False)
         self.orbit.set_view(16, 20, -35, (0, 0, 0))
 
     # ------------------------------------------------------------ 课程切换
@@ -534,9 +666,12 @@ class MCUApp(ShowBase):
         self.update_chip_map(cls.location)
         self.update_roadmap(index)
         hints = cls.lesson_hints().strip()
-        self.set_hints((hints + "\n\n" if hints else "") + GLOBAL_HINTS)
+        self.set_hints((hints + "\n\n" if hints else "") +
+                       (GLOBAL_HINTS_2D if cls.view2d else GLOBAL_HINTS))
         self.set_body("")
-        self.orbit.set_view(*cls.camera)
+        self.use_2d(cls.view2d)
+        if not cls.view2d:
+            self.orbit.set_view(*cls.camera)
         self.lesson.setup()
 
     def next_lesson(self):
@@ -553,26 +688,23 @@ class MCUApp(ShowBase):
 
     # ------------------------------------------------------------ 每帧更新
     def _update_film_offset(self):
-        # 面板挡住了左边一块，把 3D 画面的中心往右挪一点
-        lens = self.camLens
+        # 面板挡住了画面的一部分，把画面中心挪到没被挡住的那块的中间
+        lens = self.cam.node().getLens()
         if self.lesson is None:
             lens.setFilmOffset(0, 0)
             return
         aspect = self.getAspectRatio()
-        left = self.panel_w if self.panel_visible else 0.0
-        if self.lesson.sim_layout:
-            # 模拟器：右边是数据面板，下面是“这一拍”说明，3D 画面放在中间偏上
-            from .sim.view import RW
-            cx = (left - RW - 0.02) / 2
-            cz = 0.2
-        else:
-            cx, cz = left / 2, 0.0
+        left, right, bottom, top = self.visible_margins()
+        cx = (left - right) / 2
+        cz = (bottom - top) / 2 if self.lesson.view2d else (0.2 if self.lesson.sim_layout else 0.0)
         fw, fh = lens.getFilmSize()
         lens.setFilmOffset(-fw * cx / (2 * aspect), -fh * cz / 2)
 
     def step(self, dt):
         """推进一帧逻辑（测试里也会直接调用）。"""
-        self.orbit.update()
+        self.view.update()
+        if self.view is self.pan:
+            self.pan.apply()      # 窗口宽高比变了也要跟着改
         self._update_film_offset()
         if self.lesson is None:
             self.menu_scene.setH(self.menu_scene.getH() + 15 * dt)
