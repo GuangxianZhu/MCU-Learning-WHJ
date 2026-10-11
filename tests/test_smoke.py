@@ -172,3 +172,39 @@ if __name__ == "__main__":
     test_schematic_levels()
     test_logic()
     print("全部课程运行正常")
+
+
+def test_keypad():
+    """屏幕按键：按钮按下发出和实体键一样的消息，换课后按钮跟着换。"""
+    from mcu3d.keypad import lesson_keys
+    app = get_app()
+    app.open_lesson(4)                      # 第 5 课：模拟器类课程
+    assert "space" in lesson_keys(app.lesson) and "t" in lesson_keys(app.lesson)
+    app.keypad.toggle()
+    assert app.keypad.visible and app.keypad.buttons
+    view = app.lesson.view
+    assert view.cur is None and not view.queue
+    app.keypad._press("space")
+    app.taskMgr.step()          # 按钮的消息在下一帧的任务里发出
+    app.keypad._release("space")
+    app.taskMgr.step()
+    assert view.cur is not None or view.queue   # 开始执行一条指令了
+    run_frames(app, 30)
+    shot(app, "keypad_sim")
+    app.open_lesson(GPIO)                   # 第 8 课：按住 B 键
+    assert "b" in lesson_keys(app.lesson)
+    app.keypad._press("b")
+    app.taskMgr.step()
+    run_frames(app, 10)
+    assert app.lesson.idr == 1
+    app.keypad._release("b")
+    app.taskMgr.step()
+    run_frames(app, 10)
+    assert app.lesson.idr == 0
+    shot(app, "keypad_gpio")
+    app.keypad._press("escape")             # 回菜单，按键条收起
+    app.taskMgr.step()
+    run_frames(app, 3)
+    assert app.lesson is None and app.keypad.frame.isHidden()
+    app.keypad.toggle()
+    assert not app.keypad.visible
