@@ -6,6 +6,8 @@ rem    1. find Python 3.8-3.13 (install Python 3.12 silently if missing)
 rem    2. create a private environment in .venv
 rem    3. install / check the packages in requirements.txt
 rem    4. start the course
+rem  Everything is also written to the logs folder (launcher.log here,
+rem  mcu3d-*.log from the course itself) so problems can be sent to Claude.
 rem  Messages are in English on purpose: Chinese text inside .bat
 rem  files breaks on some Windows language settings.
 rem ============================================================
@@ -19,6 +21,15 @@ set "VPY=%~dp0.venv\Scripts\python.exe"
 set "STAMP=%~dp0.venv\requirements.stamp"
 set "PIPUSER="
 set "MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple"
+set "LOGDIR=%~dp0logs"
+set "LLOG=%~dp0logs\launcher.log"
+if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
+rem keep launcher.log small: start over when it is bigger than 1 MB
+if exist "%LLOG%" for %%F in ("%LLOG%") do if %%~zF GTR 1000000 del "%LLOG%" >nul 2>&1
+echo.>>"%LLOG%"
+echo ==== launcher started %DATE% %TIME% ====>>"%LLOG%"
+ver>>"%LLOG%" 2>&1
+echo folder: %~dp0>>"%LLOG%"
 
 echo ============================================
 echo    MCU 3D Classroom - one-click launcher
@@ -30,6 +41,7 @@ if not exist "%VPY%" goto :need_python
 "%VPY%" -c "import sys" >nul 2>&1
 if not errorlevel 1 goto :deps
 echo [..] The old .venv folder is broken, rebuilding it...
+echo .venv broken, rebuilding>>"%LLOG%"
 rmdir /s /q "%VENV%" >nul 2>&1
 
 :need_python
@@ -40,6 +52,7 @@ echo [..] Installing Python %PYVER% automatically, please wait (a few minutes)..
 call :install_python
 call :find_python
 if defined PY goto :make_venv
+echo Python install failed>>"%LLOG%"
 echo [x] Python could not be installed automatically.
 echo     Please install Python 3.12 from https://www.python.org/downloads/
 echo     ^(tick "Add python.exe to PATH"^), then double-click this file again.
@@ -47,10 +60,12 @@ goto :fail
 
 :make_venv
 echo [ok] Python found: %PY%
+echo python: %PY%>>"%LLOG%"
 echo [..] Creating the private environment .venv ...
 "%PY%" -m venv "%VENV%" >nul 2>&1
 if exist "%VPY%" goto :deps
 echo [!] Could not create .venv, using Python directly instead.
+echo venv creation failed, using %PY% directly>>"%LLOG%"
 set "VPY=%PY%"
 set "STAMP=%TEMP%\mcu3d_requirements.stamp"
 set "PIPUSER=--user"
@@ -63,26 +78,30 @@ if errorlevel 1 goto :install_deps
 "%VPY%" -c "import panda3d" >nul 2>&1
 if errorlevel 1 goto :install_deps
 echo [ok] Packages are already installed.
+echo packages already installed>>"%LLOG%"
 goto :run
 
 :install_deps
 echo [..] Installing packages from requirements.txt ...
-"%VPY%" -m pip install --disable-pip-version-check %PIPUSER% -r requirements.txt
+"%VPY%" -m pip install --disable-pip-version-check --log "%LLOG%" %PIPUSER% -r requirements.txt
 if not errorlevel 1 goto :deps_ok
 echo [..] Download failed, retrying with a mirror server...
-"%VPY%" -m pip install --disable-pip-version-check %PIPUSER% -r requirements.txt -i %MIRROR%
+"%VPY%" -m pip install --disable-pip-version-check --log "%LLOG%" %PIPUSER% -r requirements.txt -i %MIRROR%
 if not errorlevel 1 goto :deps_ok
 "%VPY%" -c "import panda3d" >nul 2>&1
 if errorlevel 1 goto :deps_fail
 echo [!] Could not update packages ^(offline?^), starting with what is installed.
+echo package update failed, starting anyway>>"%LLOG%"
 goto :run
 
 :deps_ok
 copy /y "requirements.txt" "%STAMP%" >nul 2>&1
 echo [ok] Packages are ready.
+echo packages installed>>"%LLOG%"
 goto :run
 
 :deps_fail
+echo package install failed>>"%LLOG%"
 echo [x] Installing packages failed. Please check the internet connection
 echo     and double-click this file again.
 goto :fail
@@ -90,17 +109,25 @@ goto :fail
 rem ---------- 3. start ----------
 :run
 echo [..] Starting MCU 3D Classroom...
+echo starting the course>>"%LLOG%"
 echo.
 "%VPY%" -m mcu3d
 if errorlevel 1 goto :run_fail
+echo course closed normally>>"%LLOG%"
 exit /b 0
 
 :run_fail
+echo course exited with error code %ERRORLEVEL% >>"%LLOG%"
 echo.
 echo [x] The program stopped with an error ^(see the messages above^).
 goto :fail
 
 :fail
+echo.
+echo Log files are in this folder ^(it opens now^):
+echo     %LOGDIR%
+echo Please send the newest mcu3d-*.log and launcher.log to Claude.
+start "" "%LOGDIR%" >nul 2>&1
 echo.
 echo Press any key to close this window.
 pause >nul

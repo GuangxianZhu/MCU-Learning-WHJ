@@ -8,6 +8,7 @@ from direct.gui.DirectGui import DGG, DirectButton, DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode
 
+from .. import log as applog
 from .. import theme
 from ..sim.asm import REG_NAMES
 from ..ui import colored, get_font
@@ -90,6 +91,7 @@ class Schematic:
             self.sheet.apply(self.state)
         names = [crumb(k, p) for k, p in self.stack]
         self.path_text.setText("位置：" + " > ".join(names))
+        applog.log.info("电路图：%s", " > ".join(names))
         if len(self.stack) > 1:
             self.up_btn.show()
         else:

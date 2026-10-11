@@ -2,7 +2,7 @@
 
 import argparse
 
-from .app import run
+from . import log as applog
 
 
 def main():
@@ -12,6 +12,9 @@ def main():
     parser.add_argument("--keys", action="store_true",
                         help="一开始就显示屏幕按键（手机远程桌面、触屏时用）")
     args = parser.parse_args()
+    # 先打开日志再导入 Panda3D：这样连“Panda3D 没装好”这种错也能记下来
+    applog.setup()
+    from .app import run
     run(args.lesson, keypad=args.keys)
 
 

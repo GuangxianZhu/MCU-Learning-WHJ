@@ -8,6 +8,7 @@
 
 from direct.gui.DirectGui import DGG, DirectButton, DirectFrame
 
+from . import log as applog
 from . import theme
 
 # 按键在按钮上显示的名字
@@ -145,5 +146,7 @@ class KeyPad:
         self.app.taskMgr.add(self._send, "keypad-release", extraArgs=[key + "-up"])
 
     def _send(self, event):
+        if not event.endswith("-up"):
+            applog.log.debug("屏幕按键 %s", event)
         self.app.messenger.send(event)
         # 返回 None：这个任务只跑一次
